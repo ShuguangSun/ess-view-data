@@ -4,7 +4,7 @@
 
 ;; Author: Shuguang Sun <shuguang79@qq.com>
 ;; Created: 2019/04/06
-;; Version: 1.0.0
+;; Version: 1.0
 ;; URL: https://github.com/ShuguangSun/ess-view-data
 ;; Package-Requires: ((emacs "26.1") (ess "1.5"))
 ;; Keywords: tools
