@@ -64,6 +64,10 @@
 
 (require 'ess-inf)
 (require 'ess-rdired)
+(require 'ess-r-mode)
+(require 'ess-r-completion)
+(require 'subr-x)
+(require 'json)
 
 (defgroup ess-view-data ()
   "ess-view-dat"
