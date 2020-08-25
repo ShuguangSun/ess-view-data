@@ -6,7 +6,7 @@
 ;; Created: 2019/04/06
 ;; Version: 1.0
 ;; URL: https://github.com/ShuguangSun/ess-view-data
-;; Package-Requires: ((emacs "26.1") (ess "1.5"))
+;; Package-Requires: ((emacs "26.1") (ess "0"))
 ;; Keywords: tools
 
 ;; This program is free software; you can redistribute it and/or modify
