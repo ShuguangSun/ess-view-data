@@ -1304,7 +1304,7 @@ Optional argument ARG arg."
             (setq evd-object
                   (funcall ess-view-data-read-string
                            "Variable: "
-                           (append
+                           (delq nil (delete-dups (append
                             (if (assq (intern ess-view-data-temp-object)
                                       ess-view-data-completion-candidate)
                                 (alist-get (intern ess-view-data-temp-object)
@@ -1312,7 +1312,7 @@ Optional argument ARG arg."
                               (alist-get (intern (replace-regexp-in-string
                                                   "`" "" ess-view-data-temp-object))
                                          ess-view-data-completion-candidate))
-                            nil)
+                            nil)))
                            nil nil token-string))
             (delete-region start end)
             ;; propertize
@@ -1327,7 +1327,7 @@ Optional argument ARG arg."
             (setq com
                   (funcall ess-view-data-read-string
                            "Value: "
-                           (append
+                           (delq nil (delete-dups (append
                             (if (assq (intern evd-object)
                                       ess-view-data-completion-candidate)
                                 (alist-get (intern evd-object)
@@ -1335,7 +1335,7 @@ Optional argument ARG arg."
                               (alist-get (intern (replace-regexp-in-string
                                                   "`" "" evd-object))
                                          ess-view-data-completion-candidate))
-                            nil)
+                            nil)))
                            nil nil token-string))
             (delete-region start end)
             (insert com))))))
