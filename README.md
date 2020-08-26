@@ -1,5 +1,6 @@
 # ess-view-data
-View data support for ESS
+
+To do tidyverse-like view and manipulate data in ESS and R.
 
 ## Installation
 
@@ -9,12 +10,31 @@ Clone this repository, or install from MELPA. Add the following to your `.emacs`
 (require 'ess-view-data)
 ```
 
+Call `ess-view-data-print`, select a data.frame/tibble, and then a buffer will pop up with data listed/printed. Further verbs can be done, like filter, select/unselect, mutate, group/ungroup, count, unique, summarise, and etc. It can be reset any time.
+
+To avoid mistaking break the orignial data, it will make a copy (e.g., as_tibble(dt)) as default.
+
+If data.table is prefered, just set `ess-view-data-current-backend` to `data.table+magrittr`. Call `ess-view-data-set-backend` to change the backends.
+
+It put a head information at above:
+```r
+# Trace: as_tibble(dt) %>% dplyr::filter(PARAMCD == "ORR", CYCLE == 1)
+# Last:  %>% dplyr::filter(PARAMCD == "ORR", CYCLE == 1)
+# Page number: 1 / 1
+# A tibble: 73 x 19
+```
+
+- The 'Trace' line tracks the history of actions, and it can be copyed to the code after viewing.
+- The 'Last' line records the last verb.
+- The 'Page number' shows the current page/total number of pages.
+- The 'A tibble' show the class and how many rows and colums in the tibble. **NB**, the 'dplyr' backend copys the data.frame to be a tibble first.
+
 ## Customization
 
-### ess-view-data-backend-list 
+### ess-view-data-backend-list
 
 - dplyr (default)
-- dplyr+DT
+- dplyr+DT (out of Emacs, using DT)
 - data.table+magrittr
 
 ### ess-view-data-print-backend-list
