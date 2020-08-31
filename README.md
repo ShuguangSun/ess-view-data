@@ -14,7 +14,7 @@ Call `ess-view-data-print`, select a object whichever can be convert to a tibble
 
 To avoid mistaking break the orignial data, it will make a copy (e.g., `as_tibble(dt)` or `as.data.table(dt)`) as default.
 
-If data.table is prefered, just set `ess-view-data-current-backend` to `data.table+magrittr`. Call `ess-view-data-set-backend` to change the backends.
+If data.table is preferred, just set `ess-view-data-current-backend` to `data.table+magrittr`. Call `ess-view-data-set-backend` to change the backends.
 
 It will put a head information at above:
 ```r
@@ -27,7 +27,7 @@ It will put a head information at above:
 - The 'Trace' line tracks the history of actions, and it can be copyed to the code after viewing. **NB** history of the operaitions can be found in buffer `*ESS*`.
 - The 'Last' line records the last verb.
 - The 'Page number' shows the current page/total number of pages.
-- The 'A tibble' show the class and how many rows and colums in the tibble. **NB**, the 'dplyr' backend copys the data.frame to be a tibble first.
+- The 'A tibble' show the class and how many rows and columns in the tibble. **NB**, the 'dplyr' backend copies the data.frame to be a tibble first.
 
 ## Customization
 

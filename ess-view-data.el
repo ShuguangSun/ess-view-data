@@ -90,7 +90,7 @@
   :group 'ess-view-data)
 
 (defcustom ess-view-data-options-width 5000
-  "Width to print data: optons(width= `ess-view-data-options-width')."
+  "Width to print data: options(width= `ess-view-data-options-width')."
   :type 'integer
   :group 'ess-view-data)
 
@@ -192,7 +192,7 @@
   "Cache of object name.")
 
 (defvar-local ess-view-data-temp-object nil
-  "Temparory varible for ess-view-data.")
+  "Temporary varible for ess-view-data.")
 
 (defvar ess-view-data-temp-object-list '()
   "List of temparory varible for ess-view-data.")
@@ -204,7 +204,7 @@
   "Current page number - 1.")
 
 (defvar-local ess-view-data-total-page 1
-  "Total page numer.")
+  "Total page number.")
 
 
 (defvar-local ess-view-data-history nil
@@ -1766,7 +1766,6 @@ Argument INDIRECT Indirect buffter to edit the parameters or verbs."
 ;;; ** goto page
 (defun ess-view-data-goto-page (page &optional pnumber)
   "Goto PAGE.
-
 Optional argument PNUMBER pange number to go."
   (unless (and ;; (string= "R" ess-dialect)
            ess-local-process-name)
