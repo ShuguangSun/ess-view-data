@@ -6,7 +6,7 @@
 ;; Created: 2019/04/06
 ;; Version: 1.0
 ;; URL: https://github.com/ShuguangSun/ess-view-data
-;; Package-Requires: ((emacs "26.1") (ess "0"))
+;; Package-Requires: ((emacs "26.1") (ess "18.10.1"))
 ;; Keywords: tools
 
 ;; This program is free software; you can redistribute it and/or modify
@@ -100,7 +100,7 @@
   :group 'ess-view-data)
 
 (defcustom ess-view-data-show-code t
-  "Show code."
+  "Show code on top of the view data buffer."
   :type 'bool
   :group 'ess-view-data)
 
@@ -208,7 +208,7 @@
 
 
 (defvar-local ess-view-data-history nil
-  "The ess-view-data history of operations.")
+  "The history of operations.")
 
 (defvar-local ess-view-data-completion-object nil
   "The candidate for completion.")
@@ -223,67 +223,67 @@
 
 (cl-defgeneric ess-view-data--do-print (backend str)
   "Benchmark function to do print.
-Argument BACKEND backend.
-Argument STR str.")
 
-(cl-defgeneric ess-view-data-do-print (backend str)
-  "Print.
-Argument BACKEND backend.
-Argument STR str.")
+Argument BACKEND Backend to dispatch, i.e., the `ess-view-data-current-update-print-backend'.
+Argument STR R script to run.")
 
 (cl-defgeneric ess-view-data--do-update (backend str)
   "Do Update.
-Argument BACKEND backend.
-Argument STR str.")
+
+Argument BACKEND Backend to dispatch, i.e., the `ess-view-data-current-backend'.
+Argument STR R script to run.")
 
 (cl-defgeneric ess-view-data--do-summarise (backend str)
   "Do summarising.
-Argument BACKEND backend.
-Argument STR str.")
+
+Argument BACKEND Backend to dispatch, i.e., the `ess-view-data-current-backend'.
+Argument STR R script to run.")
 
 (cl-defgeneric ess-view-data--create-indirect-buffer (backend str)
   "Create indirect-buffer for editting.
-Argument BACKEND backend.
-Argument STR str.")
+
+Argument BACKEND Backend to dispatch, i.e., the `ess-view-data-current-backend'.
+Argument STR R script to run.")
 
 (cl-defgeneric ess-view-data--do-reset (backend str)
   "Reset print buffer.
-Argument BACKEND backend.
-Argument STR str.")
+
+Argument BACKEND Backend to dispatch, i.e., the `ess-view-data-current-backend'.
+Argument STR R script to run.")
 
 (cl-defgeneric ess-view-data-do-save (backend str)
   "Save.
-Argument BACKEND backend.
-Argument STR str.")
 
-(cl-defgeneric ess-view-data-browse-cache-data (backend str)
-  "Browse cached data.
-Argument BACKEND backend.
-Argument STR str.")
+Argument BACKEND Backend to dispatch, i.e., the `ess-view-data-current-backend'.
+Argument STR R script to run.")
 
 (cl-defgeneric ess-view-data-do-complete-data (backend str)
   "Completing input.
-Argument BACKEND backend.
-Argument STR str.")
+
+Argument BACKEND Backend to dispatch, i.e., the `ess-view-data-current-complete-backend'.
+Argument STR R script to run.")
 
 (cl-defgeneric ess-view-data-get-total-page (backend str)
   "Total number of pages.
-Argument BACKEND backend.
-Argument STR str.")
+
+Argument BACKEND Backend to dispatch, i.e., the `ess-view-data-current-backend'.
+Argument STR R script to run.")
 
 (cl-defgeneric ess-view-data--header-line (backend str)
   "Head-line.
-Argument BACKEND backend.
-Argument STR str.")
+
+Argument BACKEND Backend to dispatch, i.e., the `ess-view-data-current-backend'.
+Argument STR R script to run.")
 
 (cl-defgeneric ess-view-data--initialize-backend (_backend)
   "Initialization."
   nil)
 
 (cl-defgeneric ess-view-data-do-kill-buffer-hook (backend str)
-  "Hooks to run after `kill-buffer'.
-Argument BACKEND backend.
-Argument STR str.")
+  "Functions to run after `kill-buffer' on '*R Data View' buffer.
+
+Argument BACKEND Backend to dispatch, i.e., the `ess-view-data-current-backend'.
+Argument STR R script to run.")
 
 ;;; * print-backend: print
 (defvar ess-view-data--print-format
@@ -322,20 +322,23 @@ Argument STR str.")
 
 ;;; ** Initialization
 (cl-defmethod ess-view-data--initialize-backend ((_backend (eql dplyr)) proc-name proc)
-  "Initializing the history of operations.
-Optional argument PROC-NAME proc-name.
-Optional argument PROC ess proc."
+  "Initialization.
+
+Initializing the history of operations, make temp object.
+
+Optional argument PROC-NAME The name of associated ESS process, usually `ess-local-process-name'.
+Optional argument PROC The assciated ESS process."
   (let ((obj-space-p (string-match-p ess-view-data-objname-regex ess-view-data-object))
         (obj-back-quote-p (string-match-p "`" ess-view-data-object))
         (obj-back-quote (replace-regexp-in-string "`" "" ess-view-data-object)))
-  (when (null ess-view-data-history)
+  (unless ess-view-data-history
     (setq ess-view-data-history
           (format (cond (obj-back-quote-p "as_tibble(%s)")
                         (obj-space-p "as_tibble(`%s`)")
                         (t "as_tibble(%s)"))
                   ess-view-data-object)))
   ;; Initializing the temparory object, for stepwise
-  (when (null ess-view-data-temp-object)
+  (unless ess-view-data-temp-object
     (setq ess-view-data-temp-object
           (format (cond (obj-back-quote-p "`%s`")
                         (obj-space-p "`%s`")
@@ -374,9 +377,12 @@ Optional argument PROC ess proc."
   (goto-char (point-min)))
 
 (cl-defmethod ess-view-data-get-total-page ((_backend (eql dplyr)) proc-name proc)
-  "Initializing the history of operations.
-Optional argument PROC-NAME proc-name.
-Optional argument PROC ess proc."
+  "Get total number of pages of the current object (data.frame/tibble/data.table).
+
+If `ess-view-data-maxprint-p' is nil, it will show 100 rows/lines per page for dplyr+print/kable.
+
+Optional argument PROC-NAME The name of associated ESS process, usually `ess-local-process-name'.
+Optional argument PROC The assciated ESS process."
     (when (and proc-name proc
                (not (process-get proc 'busy)))
       (setq ess-view-data-total-page
@@ -389,9 +395,12 @@ Optional argument PROC ess proc."
 
 
 (cl-defmethod ess-view-data-do-kill-buffer-hook ((_backend (eql dplyr)) proc-name proc)
-  "Initializing the history of operations.
-Optional argument PROC-NAME proc-name.
-Optional argument PROC ess proc."
+  "Functions to run after `kill-buffer' on '*R Data View' buffer.
+
+The default is to rm the temparory object.
+
+Optional argument PROC-NAME The name of associated ESS process, usually `ess-local-process-name'.
+Optional argument PROC The assciated ESS process."
     (when (and proc-name proc
                (not (process-get proc 'busy)))
       (ess-command (format "rm(%s)\n" ess-view-data-temp-object))
@@ -401,8 +410,9 @@ Optional argument PROC ess proc."
 ;;; ** Utilities
 (cl-defmethod ess-view-data--do-update ((_backend (eql dplyr)) fun action)
   "Update the data frame by dplyr stepwisely.
-Optional argument FUN fun.
-Optional argument ACTION action."
+
+Optional argument FUN What to do with the data, e.g., verb like select, filter, etc..
+Optional argument ACTION Parameter (R script) for FUN, e.g., columns for select."
   (let (cmdhist cmd result)
     (setq cmdhist
           (pcase fun
@@ -456,8 +466,9 @@ Optional argument ACTION action."
 
 (cl-defmethod ess-view-data--do-summarise ((_backend (eql dplyr)) fun action)
   "Do summarising by dplyr stepwisely, without modfiy the data frame.
-Optional argument FUN fun.
-Optional argument ACTION action."
+
+Optional argument FUN What to do with the data, e.g., verb like count, unique, etc..
+Optional argument ACTION Parameter (R script) for FUN, e.g., columns for count."
   (let (cmdhist cmd result)
     (setq cmdhist
           (pcase fun
@@ -485,7 +496,8 @@ Optional argument ACTION action."
 
 (cl-defmethod ess-view-data--do-reset ((_backend (eql dplyr)) action)
   "Update the data frame by dplyr stepwisely.
-Optional argument ACTION action."
+
+Optional argument ACTION R script to reset the view process, which will become the cmd history."
   (let (cmdhist cmd result)
     (setq cmdhist action)
     (setq ess-view-data-page-number 0)
@@ -506,7 +518,8 @@ Optional argument ACTION action."
 
 (cl-defmethod ess-view-data-do-goto-page ((_backend (eql dplyr)) page &optional pnumber)
   "Goto PAGE.
-Optional argument PNUMBER page number."
+
+Optional argument PNUMBER The page number to go to."
   (let (cmd result)
     (setq ess-view-data-page-number
           (pcase page
@@ -539,12 +552,13 @@ Optional argument PNUMBER page number."
   ((_backend (eql dplyr))
    type fun obj-list temp-object parent-buf proc-name)
   "Create an edit-indirect buffer and return it.
-Optional argument TYPE action type.
-Optional argument FUN action fun.
-Optional argument OBJ-LIST list of objects.
-Optional argument TEMP-OBJECT temporary object.
-Optional argument PARENT-BUF parent buffer.
-Optional argument PROC-NAME proc-name."
+
+Optional argument TYPE Action type, e.g., update, reset, summarise.
+Optional argument FUN Action function to do with data, e.g., select, count, etc..
+Optional argument OBJ-LIST Columns/variables to do with.
+Optional argument TEMP-OBJECT Temporary data in the view process.
+Optional argument PARENT-BUF The associated parent buffer for the view process.
+Optional argument PROC-NAME The name of associated ESS process, usually `ess-local-process-name'."
   (let ((buf (get-buffer-create (format ess-view-data-source-buffer-name-format temp-object)))
         pts)
     (with-current-buffer buf
@@ -615,7 +629,7 @@ Optional argument PROC-NAME proc-name."
 
 
 (defcustom ess-view-data-DT-rows-per-page 1000
-  "Rows per page."
+  "Rows per page for DT."
   :type 'integer
   :group 'ess-view-data)
 
@@ -629,8 +643,9 @@ Optional argument PROC-NAME proc-name."
 
 
 (defun ess-view-data-make-safe-dir (dir)
-  "This is `doc-view-make-safe-dir'.
-Just to try the load the doc-view in case that people doesn't use it.
+  "This is from `doc-view-make-safe-dir'.
+Just to try create a temporary directory to cache the DT files.
+
 Argument DIR name of temparory dir."
   (condition-case nil
       ;; Create temp files with strict access rights.  It's easy to
@@ -658,20 +673,23 @@ Argument DIR name of temparory dir."
 
 ;;; ** Initialization
 (cl-defmethod ess-view-data--initialize-backend ((_backend (eql dplyr+DT)) proc-name proc)
-  "Initializing the history of operations.
-Optional argument PROC-NAME proc-name.
-Optional argument PROC ess proc."
+  "Initialization.
+
+Initializing the history of operations, make temp object.
+
+Optional argument PROC-NAME The name of associated ESS process, usually `ess-local-process-name'.
+Optional argument PROC The assciated ESS process."
   (let ((obj-space-p (string-match-p ess-view-data-objname-regex ess-view-data-object))
         (obj-back-quote-p (string-match-p "`" ess-view-data-object))
         (obj-back-quote (replace-regexp-in-string "`" "" ess-view-data-object)))
-  (when (null ess-view-data-history)
+  (unless ess-view-data-history
     (setq ess-view-data-history
           (format (cond (obj-back-quote-p "as_tibble(%s)")
                         (obj-space-p "as_tibble(`%s`)")
                         (t "as_tibble(%s)"))
                   ess-view-data-object)))
   ;; Initializing the temparory object, for stepwise
-  (when (null ess-view-data-temp-object)
+  (unless ess-view-data-temp-object
     (setq ess-view-data-temp-object
           (format (cond (obj-back-quote-p "`%s`")
                         (obj-space-p "`%s`")
@@ -700,9 +718,14 @@ Optional argument PROC ess proc."
 
 
 (cl-defmethod ess-view-data-get-total-page ((_backend (eql dplyr+DT)) proc-name proc)
-  "Initializing the history of operations.
-Optional argument PROC-NAME proc-name.
-Optional argument PROC ess proc."
+  "Get the total number of pages.
+
+Get total number of pages of the current object (data.frame/tibble/data.table).
+
+If `ess-view-data-maxprint-p' is nil, it will show 1000 rows/lines per page for DT.
+
+Optional argument PROC-NAME The name of associated ESS process, usually `ess-local-process-name'.
+Optional argument PROC The assciated ESS process."
   (when (and proc-name proc
              (not (process-get proc 'busy)))
     (setq ess-view-data-total-page
@@ -713,9 +736,12 @@ Optional argument PROC ess proc."
           (1+ (floor (/ ess-view-data-total-page ess-view-data-rows-per-page))))))
 
 (cl-defmethod ess-view-data-do-kill-buffer-hook ((_backend (eql dplyr+DT)) proc-name proc)
-  "Initializing the history of operations.
-Optional argument PROC-NAME proc-name.
-Optional argument PROC ess proc."
+  "Functions to run after `kill-buffer' on '*R Data View' buffer.
+
+The default is to rm the temparory object.
+
+Optional argument PROC-NAME The name of associated ESS process, usually `ess-local-process-name'.
+Optional argument PROC The assciated ESS process."
     (when (and proc-name proc
                (not (process-get proc 'busy)))
       (ess-command (format "rm(%s)\n" ess-view-data-temp-object))
@@ -724,8 +750,9 @@ Optional argument PROC ess proc."
 ;;; ** Utilities
 (cl-defmethod ess-view-data--do-update ((_backend (eql dplyr+DT)) fun action)
   "Update the data frame by dplyr stepwisely.
-Optional argument FUN what to do.
-Optional argument ACTION action."
+
+Optional argument FUN what to do, e.g. select, filter, etc..
+Optional argument ACTION parameters to the FUN."
   (let (cmdhist cmd result)
     (setq cmdhist
           (pcase fun
@@ -779,8 +806,9 @@ Optional argument ACTION action."
 
 (cl-defmethod ess-view-data--do-summarise ((_backend (eql dplyr+DT)) fun action)
   "Do summarising by dplyr stepwisely, without modfiy the data frame.
-Optional argument FUN fun.
-Optional argument ACTION action."
+
+Optional argument FUN what to do, e.g., count, unique, etc..
+Optional argument ACTION parameters to the FUN."
   (let (cmdhist cmd result)
     (setq cmdhist
           (pcase fun
@@ -806,7 +834,8 @@ Optional argument ACTION action."
 
 (cl-defmethod ess-view-data--do-reset ((_backend (eql dplyr+DT)) action)
   "Update the data frame by dplyr stepwisely.
-Optional argument ACTION action."
+
+Optional argument ACTION R script to reset the view process, which will become the cmd history."
   (let (cmdhist cmd result)
     (setq cmdhist action)
     (setq ess-view-data-page-number 0)
@@ -830,12 +859,13 @@ Optional argument ACTION action."
   ((_backend (eql dplyr+DT))
    type fun obj-list temp-object parent-buf proc-name)
   "Create an edit-indirect buffer and return it.
-Optional argument TYPE type.
-Optional argument FUN fun.
-Optional argument OBJ-LIST obj-list.
-Optional argument TEMP-OBJECT temp-object.
-Optional argument PARENT-BUF parent-buf.
-Optional argument PROC-NAME proc-name."
+
+Optional argument TYPE Action type, e.g., update, reset, summarise.
+Optional argument FUN Action function to do with data, e.g., select, count, etc..
+Optional argument OBJ-LIST Columns/variables to do with.
+Optional argument TEMP-OBJECT Temporary data in the view process.
+Optional argument PARENT-BUF The associated parent buffer for the view process.
+Optional argument PROC-NAME The name of associated ESS process, usually `ess-local-process-name'."
   (let ((buf (get-buffer-create (format ess-view-data-source-buffer-name-format temp-object)))
         pts)
     (with-current-buffer buf
@@ -900,7 +930,8 @@ Optional argument PROC-NAME proc-name."
 
 (cl-defmethod ess-view-data-do-goto-page ((_backend (eql dplyr+DT)) page &optional pnumber)
   "Goto PAGE. Just reset `ess-view-data-page-number' when backend is dplyr+DT.
-Optional argument PNUMBER page number."
+
+Optional argument PNUMBER The page number to go to."
   (let (result)
     (setq ess-view-data-page-number
           (pcase page
@@ -920,19 +951,20 @@ Optional argument PNUMBER page number."
 ;;; ** Initialization
 (cl-defmethod ess-view-data--initialize-backend ((_backend (eql data.table+magrittr)) proc-name proc)
   "Initializing the history of operations.
-Optional argument PROC-NAME proc-name.
-Optional argument PROC ess proc."
+
+Optional argument PROC-NAME The name of associated ESS process, usually `ess-local-process-name'.
+Optional argument PROC The assciated ESS process."
   (let ((obj-space-p (string-match-p ess-view-data-objname-regex ess-view-data-object))
         (obj-back-quote-p (string-match-p "`" ess-view-data-object))
         (obj-back-quote (replace-regexp-in-string "`" "" ess-view-data-object)))
-  (when (null ess-view-data-history)
+  (unless ess-view-data-history
     (setq ess-view-data-history
           (format (cond (obj-back-quote-p "as.data.table(%s)")
                         (obj-space-p "as.data.table(`%s`)")
                         (t "as.data.table(%s)"))
                   ess-view-data-object)))
   ;; Initializing the temparory object, for stepwise
-  (when (null ess-view-data-temp-object)
+  (unless ess-view-data-temp-object
     (setq ess-view-data-temp-object
           (format (cond (obj-back-quote-p "`%s`")
                         (obj-space-p "`%s`")
@@ -967,8 +999,9 @@ Optional argument PROC ess proc."
 
 (cl-defmethod ess-view-data-get-total-page ((_backend (eql data.table+magrittr)) proc-name proc)
   "Initializing the history of operations.
-Optional argument PROC-NAME proc-name.
-Optional argument PROC ess proc."
+
+Optional argument PROC-NAME The name of associated ESS process, usually `ess-local-process-name'.
+Optional argument PROC The assciated ESS process."
     (when (and proc-name proc
                (not (process-get proc 'busy)))
       (setq ess-view-data-total-page
@@ -982,8 +1015,9 @@ Optional argument PROC ess proc."
 
 (cl-defmethod ess-view-data-do-kill-buffer-hook ((_backend (eql data.table+magrittr)) proc-name proc)
   "Initializing the history of operations.
-Optional argument PROC-NAME proc-name.
-Optional argument PROC ess proc."
+
+Optional argument PROC-NAME The name of associated ESS process, usually `ess-local-process-name'.
+Optional argument PROC The assciated ESS process."
     (when (and proc-name proc
                (not (process-get proc 'busy)))
       (ess-command (format "rm(%s)\n" ess-view-data-temp-object))
@@ -995,8 +1029,9 @@ Optional argument PROC ess proc."
 
 (cl-defmethod ess-view-data--do-update ((_backend (eql data.table+magrittr)) fun action)
   "Update the data frame by data.table stepwisely.
-Optional argument FUN fun.
-Optional argument ACTION action."
+
+Optional argument FUN What to do with the data, e.g., verb like select, filter, etc..
+Optional argument ACTION Parameter (R script) for FUN, e.g., columns for select."
   (let (cmdhist cmd result)
     (setq cmdhist
           (pcase fun
@@ -1054,8 +1089,9 @@ Optional argument ACTION action."
 
 (cl-defmethod ess-view-data--do-summarise ((_backend (eql data.table+magrittr)) fun action)
   "Do summarising by data.table stepwisely, without modfiy the data frame.
-Optional argument FUN fun.
-Optional argument ACTION action."
+
+Optional argument FUN What to do with the data, e.g., verb like count, unique, etc..
+Optional argument ACTION Parameter (R script) for FUN, e.g., columns for count."
   (let (cmdhist cmd result)
     (setq cmdhist
           (pcase fun
@@ -1086,7 +1122,8 @@ Optional argument ACTION action."
 
 (cl-defmethod ess-view-data--do-reset ((_backend (eql data.table+magrittr)) action)
   "Update the data frame by data.table stepwisely.
-Optional argument ACTION action."
+
+Optional argument ACTION R script to reset the view process, which will become the cmd history."
   (let (cmdhist cmd result)
     (setq cmdhist action)
     (setq ess-view-data-page-number 0)
@@ -1107,7 +1144,8 @@ Optional argument ACTION action."
 
 (cl-defmethod ess-view-data-do-goto-page ((_backend (eql data.table+magrittr)) page &optional pnumber)
   "Goto PAGE.
-Optional argument PNUMBER page number."
+
+Optional argument PNUMBER The page number to go to."
   (let (cmd result)
     (setq ess-view-data-page-number
           (pcase page
@@ -1136,12 +1174,13 @@ Optional argument PNUMBER page number."
   ((_backend (eql data.table+magrittr))
    type fun obj-list temp-object parent-buf proc-name)
   "Create an edit-indirect buffer and return it.
-Optional argument TYPE type.
-Optional argument FUN fun.
-Optional argument OBJ-LIST obj-list.
-Optional argument TEMP-OBJECT temp-object.
-Optional argument PARENT-BUF parent-buf.
-Optional argument PROC-NAME proc-name."
+
+Optional argument TYPE Action type, e.g., update, reset, summarise.
+Optional argument FUN Action function to do with data, e.g., select, count, etc..
+Optional argument OBJ-LIST Columns/variables to do with.
+Optional argument TEMP-OBJECT Temporary data in the view process.
+Optional argument PARENT-BUF The associated parent buffer for the view process.
+Optional argument PROC-NAME The name of associated ESS process, usually `ess-local-process-name'."
   (let ((buf (get-buffer-create (format ess-view-data-source-buffer-name-format temp-object)))
         pts)
     (with-current-buffer buf
@@ -1211,6 +1250,7 @@ Optional argument PROC-NAME proc-name."
 
 (cl-defmethod ess-view-data-do-save ((_backend (eql write.csv)) file-name)
   "Ess view data doing select by write.csv stepwise.
+
 Optional argument FILE-NAME file name."
   (let (cmd result)
     (setq cmd (concat
@@ -1222,6 +1262,7 @@ Optional argument FILE-NAME file name."
 
 (cl-defmethod ess-view-data-do-save ((_backend (eql readr::write_csv)) file-name)
   "Ess view data doing select by readr::write_csv stepwise.
+
 Optional argument FILE-NAME file-name."
   (let (cmd result)
     (setq cmd (concat
@@ -1233,6 +1274,7 @@ Optional argument FILE-NAME file-name."
 
 (cl-defmethod ess-view-data-do-save ((_backend (eql data.table::fwrite)) file-name)
   "Ess view data doing select by data.table::fwrite stepwise.
+
 Optional argument FILE-NAME file-name."
   (let (cmd result)
     (setq cmd (concat
@@ -1246,7 +1288,8 @@ Optional argument FILE-NAME file-name."
 ;;; * For completion
 (cl-defmethod ess-view-data-do-complete-data ((_backend (eql jsonlite)) &optional dataframe)
   "To get the list for completing in data frame.
-Optional argument DATAFRAME dataframe."
+
+Optional argument DATAFRAME dataframe to do complete which will be dumped vis toJSON."
   (let (cmd result)
     (setq cmd
           (concat
@@ -1261,7 +1304,8 @@ Optional argument DATAFRAME dataframe."
 
 (defun ess-view-data--previous-complete-object (prop)
   "Search for the object.
-Argument PROP property."
+
+Argument PROP text property to get the object for completion."
   (let (prop-value)
     (while (progn
              (goto-char (previous-single-char-property-change (point) prop))
@@ -1274,7 +1318,8 @@ Argument PROP property."
 
 (defun ess-view-data-complete-data (&optional arg)
   "Ess view data do complete.
-Optional argument ARG arg."
+
+Optional argument ARG if non-nil, it will read the which variable to be completed."
   (interactive "P")
   (unless (and ;; (string= "R" ess-dialect)
            ess-local-process-name)
@@ -1515,10 +1560,10 @@ Can be called only when the current buffer is an edit-indirect buffer."
 
 (defun ess-view-data-do-apply (type fun indirect &optional desc trans prompt)
   "Update data frame.
-Argument TYPE DESC.
-Argument FUN fun.
-Argument INDIRECT indirect."
-  ;; (interactive "P")
+
+Argument TYPE Action type, e.g., update, reset, summarise.
+Argument FUN Action function to do with data, e.g., select, count, etc..
+Argument INDIRECT Indirect buffter to edit the parameters or verbs."
   (unless (and ;; (string= "R" ess-dialect)
            ess-local-process-name)
     (error "Not in an R buffer with attached process"))
@@ -1575,12 +1620,12 @@ Argument INDIRECT indirect."
               (cl-pushnew obj obj-list)
               (cl-pushnew obj objs2)))))
       (if indirect
-          (unless (null obj-list)
+          (when obj-list
             (ess-view-data--create-indirect-buffer ess-view-data-current-backend
                                                    type fun obj-list
                                                    ess-view-data-temp-object
                                                    buf proc-name))
-        (unless (null obj-list)
+        (when obj-list
           (setq command
                 (pcase type
                   ('update
@@ -1721,7 +1766,8 @@ Argument INDIRECT indirect."
 ;;; ** goto page
 (defun ess-view-data-goto-page (page &optional pnumber)
   "Goto PAGE.
-Optional argument PNUMBER pange number."
+
+Optional argument PNUMBER pange number to go."
   (unless (and ;; (string= "R" ess-dialect)
            ess-local-process-name)
     (error "Not in an R buffer with attached process"))
@@ -1774,7 +1820,8 @@ Optional argument PNUMBER pange number."
 
 (defun ess-view-data-goto-page-number (&optional pnumber)
   "Ess view data do select.
-Optional argument PNUMBER page number."
+
+Optional argument PNUMBER The page number to go to."
   (interactive "NGoto page:")
   ;; (unless pnumber )
   (ess-view-data-goto-page 'page (1- pnumber)))
@@ -1815,9 +1862,10 @@ Optional argument PNUMBER page number."
 
 (defun ess-view-data-print-ex (&optional obj proc-name maxprint)
   "Do print.
-Optional argument OBJ obj.
-Optional argument PROC-NAME proc-name.
-Optional argument MAXPRINT maxprint."
+
+Optional argument OBJ the object (data.frame/tibble etc.) to print and view.
+Optional argument PROC-NAME the name of associated ESS process.
+Optional argument MAXPRINT if non-nil, 100 rows/lines per page; if t, shwo all."
   (interactive "P")
   (let* ((obj (or obj ess-view-data-object))
          (proc-name (or proc-name (buffer-local-value 'ess-local-process-name (current-buffer))))
@@ -1959,11 +2007,12 @@ Optional argument MAXPRINT maxprint."
 
 (defun ess-view-data-set-backend (manipulate update summarise write complete)
   "Set backend.
-Argument MANIPULATE manipulate.
-Argument UPDATE update.
-Argument SUMMARISE summarise.
-Argument WRITE write.
-Argument COMPLETE complete."
+
+Argument MANIPULATE `ess-view-data-current-backend' from `ess-view-data-backend-list'.
+Argument UPDATE `ess-view-data-current-update-print-backend' from `ess-view-data-print-backend-list'.
+Argument SUMMARISE `ess-view-data-current-summarize-print-backend' from `ess-view-data-print-backend-list'.
+Argument WRITE `ess-view-data-current-save-backend' from `ess-view-data-save-backend-list'.
+Argument COMPLETE `ess-view-data-current-complete-backend' from `ess-view-data-complete-backend-list'."
   (interactive (list (completing-read
                       (format "Backend for data manipulate (%s): "
                               ess-view-data-current-backend)
