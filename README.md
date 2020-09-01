@@ -65,9 +65,16 @@ It will put a head information at above:
 
 **NOTE**: it will make a copy of the data and then does the following action
 
-- [x] ess-view-data-print: the main function to view data
+The entry function to view data:
+- [x] ess-view-data-print
+
+Setting:
+
 - [x] ess-view-data-set-backend: change backend
 - [x] ess-view-data-toggle-maxprint: toggle limitation of lines per page to print
+
+Verbs:
+
 - [x] ess-view-data-filter
 - [x] ess-view-data-select / ess-view-data-unselect
 - [x] ess-view-data-sort
@@ -83,3 +90,13 @@ It will put a head information at above:
 - [x] ess-view-data-overview
 - [x] ess-view-data-goto-page / -next-page / -preious-page / -first-page / -last-page / -page-number
 - [x] ess-view-data-save
+
+Utitlities:
+
+
+In indirect buffer, for example, the buffer poped up when ess-view-data-filter is called
+
+- [x] ess-view-data-complete-object: complete or insert the name of one column/variable
+- [x] ess-view-data-complete-data: complete or insert the value of one column/variable
+- [x] ess-view-data-insert-all-cols: insert names of all columns/variables
+- [x] ess-view-data-insert-all-values: insert values of all columns/variables
