@@ -569,7 +569,7 @@ Optional argument PROC-NAME The name of associated ESS process, usually `ess-loc
       (setq ess-view-data--action `((:type . ,type) (:function . ,fun)))
       ;; (print (alist-get :function ess-view-data--action))
       ;; (print (alist-get ':type ess-view-data--action))
-      (insert "# Insert variable name[s] (C-c C-i[I]), Insert Values (C-c C-l[L])\n")
+      (insert "# Insert [all] variable name[s] (C-c C-i[a]), [all] Values (C-c C-l[v])\n")
       (insert "# Line started with `#' will be omited\n")
       (insert "# Don't comment code as all code will be wrapped in one line\n")
       (pcase fun
@@ -620,8 +620,8 @@ Optional argument PROC-NAME The name of associated ESS process, usually `ess-loc
       (local-set-key "\C-c\C-k" #'ess-view-data-commit-abort)
       (local-set-key "\C-c\C-i" #'ess-view-data-complete-object)
       (local-set-key "\C-c\C-l" #'ess-view-data-complete-data)
-      (local-set-key (kbd "C-c C-S-i") #'ess-view-data-insert-all-cols)
-      (local-set-key (kbd "C-c C-S-l") #'ess-view-data-insert-all-values))
+      (local-set-key (kbd "C-c C-a") #'ess-view-data-insert-all-cols)
+      (local-set-key (kbd "C-c C-v") #'ess-view-data-insert-all-values))
     (select-window (display-buffer buf))))
 
 
@@ -923,8 +923,8 @@ Optional argument PROC-NAME The name of associated ESS process, usually `ess-loc
       (local-set-key "\C-c\C-k" #'ess-view-data-commit-abort)
       (local-set-key "\C-c\C-i" #'ess-view-data-complete-object)
       (local-set-key "\C-c\C-l" #'ess-view-data-complete-data)
-      (local-set-key (kbd "C-c C-S-i") #'ess-view-data-insert-all-cols)
-      (local-set-key (kbd "C-c C-S-l") #'ess-view-data-insert-all-values))
+      (local-set-key (kbd "C-c C-a") #'ess-view-data-insert-all-cols)
+      (local-set-key (kbd "C-c C-v") #'ess-view-data-insert-all-values))
     (select-window (display-buffer buf))))
 
 
@@ -1240,8 +1240,8 @@ Optional argument PROC-NAME The name of associated ESS process, usually `ess-loc
       (local-set-key "\C-c\C-k" #'ess-view-data-commit-abort)
       (local-set-key "\C-c\C-i" #'ess-view-data-complete-object)
       (local-set-key "\C-c\C-l" #'ess-view-data-complete-data)
-      (local-set-key (kbd "C-c C-S-i") #'ess-view-data-insert-all-cols)
-      (local-set-key (kbd "C-c C-S-l") #'ess-view-data-insert-all-values))
+      (local-set-key (kbd "C-c C-a") #'ess-view-data-insert-all-cols)
+      (local-set-key (kbd "C-c C-v") #'ess-view-data-insert-all-values))
     (select-window (display-buffer buf))))
 
 
