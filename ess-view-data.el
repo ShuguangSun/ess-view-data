@@ -6,7 +6,7 @@
 ;; Created: 2019/04/06
 ;; Version: 1.0
 ;; URL: https://github.com/ShuguangSun/ess-view-data
-;; Package-Requires: ((emacs "26.1") (ess "18.10.1"))
+;; Package-Requires: ((emacs "26.1") (ess "18.10.1") (csv-mode "1.12"))
 ;; Keywords: tools
 
 ;; This program is free software; you can redistribute it and/or modify
@@ -372,8 +372,9 @@ Optional argument PROC The assciated ESS process."
       (forward-line)
       (setq lin (1+ lin)))
     (unless (fboundp 'csv-header-line) (require 'csv-mode))
-    (setq csv--header-line nil)
-    (csv-header-line lin))
+    (unless (fboundp 'csv-header-line)
+      (setq csv--header-line nil)
+      (csv-header-line lin)))
   (goto-char (point-min)))
 
 (cl-defmethod ess-view-data-get-total-page ((_backend (eql dplyr)) proc-name proc)
@@ -993,8 +994,9 @@ Optional argument PROC The assciated ESS process."
       (forward-line)
       (setq lin (1+ lin)))
     (unless (fboundp 'csv-header-line) (require 'csv-mode))
-    (setq csv--header-line nil)
-    (csv-header-line lin))
+    (unless (fboundp 'csv-header-line)
+      (setq csv--header-line nil)
+      (csv-header-line lin)))
   (goto-char (point-min)))
 
 (cl-defmethod ess-view-data-get-total-page ((_backend (eql data.table+magrittr)) proc-name proc)
