@@ -68,6 +68,10 @@ It will put a head information at above:
 The entry function to view data:
 - [x] ess-view-data-print
 
+In a ess-r buffer or a Rscript buffer, `M-x ess-view-data-print` and input `mtcars`,
+
+![ess-view-data-print](screenshot/ess-view-data-print.png)
+
 Setting:
 
 - [x] ess-view-data-set-backend: change backend
@@ -76,8 +80,17 @@ Setting:
 Verbs:
 
 - [x] ess-view-data-filter
+
+![ess-view-data-filter](screenshot/ess-view-data-filter.gif)
+
 - [x] ess-view-data-select / ess-view-data-unselect
+
+![ess-view-data-select](screenshot/ess-view-data-select.gif)
+
 - [x] ess-view-data-sort
+
+![ess-view-data-sort](screenshot/ess-view-data-sort.gif)
+
 - [x] ess-view-data-group / ess-view-data-ungroup
 - [x] ess-view-data-mutate
 - [x] ess-view-data-slice
@@ -86,8 +99,17 @@ Verbs:
 - [x] ess-view-data-reset
 - [x] ess-view-data-unique
 - [x] ess-view-data-count
+
+![ess-view-data-count](screenshot/ess-view-data-count.gif)
+
 - [x] ess-view-data-summarise
+
+![ess-view-data-summarise](screenshot/ess-view-data-summarise.gif)
+
 - [x] ess-view-data-overview
+
+![ess-view-data-overview-skimr](screenshot/ess-view-data-overview-skimr.gif)
+
 - [x] ess-view-data-goto-page / -next-page / -preious-page / -first-page / -last-page / -page-number
 - [x] ess-view-data-save
 
@@ -105,3 +127,4 @@ In indirect buffer, for example, the buffer poped up when ess-view-data-filter i
 ## TODO
 
 - [ ] row.names support
+- [ ] header-line
