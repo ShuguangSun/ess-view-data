@@ -70,7 +70,7 @@ The entry function to view data:
 
 In a ess-r buffer or a Rscript buffer, `M-x ess-view-data-print` and input `mtcars`,
 
-![ess-view-data-print](screenshot/ess-view-data-print.png)
+![ess-view-data-print](screenshot/ess-view-data-print.png?raw=true)
 
 Setting:
 
@@ -81,11 +81,11 @@ Verbs:
 
 - [x] ess-view-data-filter
 
-![ess-view-data-filter](screenshot/ess-view-data-filter.gif)
+![ess-view-data-filter](/screenshot/ess-view-data-filter.gif)
 
 - [x] ess-view-data-select / ess-view-data-unselect
 
-![ess-view-data-select](screenshot/ess-view-data-select.gif)
+![ess-view-data-select](/screenshot/ess-view-data-select.gif?raw=true)
 
 - [x] ess-view-data-sort
 
