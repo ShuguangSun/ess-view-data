@@ -81,7 +81,7 @@ Verbs:
 
 - [x] ess-view-data-filter
 
-![ess-view-data-filter](/screenshot/ess-view-data-filter.gif)
+![ess-view-data-filter](/screenshot/ess-view-data-filter.gif?raw=true)
 
 - [x] ess-view-data-select / ess-view-data-unselect
 
@@ -89,7 +89,7 @@ Verbs:
 
 - [x] ess-view-data-sort
 
-![ess-view-data-sort](screenshot/ess-view-data-sort.gif)
+![ess-view-data-sort](screenshot/ess-view-data-sort.gif?raw=true)
 
 - [x] ess-view-data-group / ess-view-data-ungroup
 - [x] ess-view-data-mutate
@@ -100,11 +100,11 @@ Verbs:
 - [x] ess-view-data-unique
 - [x] ess-view-data-count
 
-![ess-view-data-count](screenshot/ess-view-data-count.gif)
+![ess-view-data-count](screenshot/ess-view-data-count.gif?raw=true)
 
 - [x] ess-view-data-summarise
 
-![ess-view-data-summarise](screenshot/ess-view-data-summarise.gif)
+![ess-view-data-summarise](screenshot/ess-view-data-summarise.gif?raw=true)
 
 - [x] ess-view-data-overview
 
