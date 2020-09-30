@@ -100,3 +100,8 @@ In indirect buffer, for example, the buffer poped up when ess-view-data-filter i
 - [x] ess-view-data-complete-data: complete or insert the value of one column/variable
 - [x] ess-view-data-insert-all-cols: insert names of all columns/variables
 - [x] ess-view-data-insert-all-values: insert values of all columns/variables
+
+
+## TODO
+
+- [ ] row.names support

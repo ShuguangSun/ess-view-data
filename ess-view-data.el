@@ -358,7 +358,8 @@ Optional argument PROC The assciated ESS process."
   (delete-dups ess-view-data-temp-object-list))
 
 
-(defvar csv--header-line)
+;; (defvar csv--header-line)
+(defvar-local csv--header-line nil)
 (declare-function csv-header-line "csv-mode")
 
 (cl-defmethod ess-view-data--header-line ((_backend (eql dplyr)))
@@ -371,7 +372,7 @@ Optional argument PROC The assciated ESS process."
         (search-forward-regexp "^\\(+\\|#\\)" nil t)
       (forward-line)
       (setq lin (1+ lin)))
-    (unless (fboundp 'csv-header-line) (require 'csv-mode))
+    (unless (fboundp 'csv-header-line) (require 'csv-mode nil t))
     (unless (fboundp 'csv-header-line)
       (setq csv--header-line nil)
       (csv-header-line lin)))
@@ -993,7 +994,7 @@ Optional argument PROC The assciated ESS process."
         (search-forward-regexp "^\\(+\\|#\\)" nil t)
       (forward-line)
       (setq lin (1+ lin)))
-    (unless (fboundp 'csv-header-line) (require 'csv-mode))
+    (unless (fboundp 'csv-header-line) (require 'csv-mode nil t))
     (unless (fboundp 'csv-header-line)
       (setq csv--header-line nil)
       (csv-header-line lin)))
