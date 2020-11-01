@@ -225,7 +225,7 @@
   "List of verbs which can change the data.")
 
 (defvar ess-view-data-verb-summarise-list
-  (list "count" "unique" "slice" "summarise")
+  (list "count" "unique" "slice" "summarise" "skimr" "skimr-all")
   "List of verbs which do summarise.")
 
 (defvar ess-view-data-verb-summarise-indirect-list
@@ -530,6 +530,10 @@ Optional argument ACTION Parameter (R script) for FUN, e.g., columns for count."
                      (mapconcat 'identity (delete-dups (nreverse action)) ",")))
             ('slice
              (format " %%>%% dplyr::slice(%s)" action))
+            ('skimr
+             (format " %%>%% skimr::skim(%s)" (mapconcat 'identity (delete-dups (nreverse action)) ",")))
+            ('skimr-all
+             " %%>%% skimr::skim()")
             ;; ('summarise
             ;;  (format " %%>%% dplyr::summarise(%s)" action))
             (_
@@ -1809,6 +1813,11 @@ Argument INDIRECT Indirect buffter to edit the parameters or verbs."
   "Count."
   (interactive)
   (ess-view-data-do-apply 'summarise 'count nil nil))
+
+(defun ess-view-data-skimr ()
+  "Count."
+  (interactive)
+  (ess-view-data-do-apply 'summarise 'skimr nil nil))
 
 (defun ess-view-data-summarise ()
   "Ess view data do summarise."
