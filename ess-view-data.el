@@ -531,9 +531,10 @@ Optional argument ACTION Parameter (R script) for FUN, e.g., columns for count."
             ('slice
              (format " %%>%% dplyr::slice(%s)" action))
             ('skimr
-             (format " %%>%% skimr::skim(%s)" (mapconcat 'identity (delete-dups (nreverse action)) ",")))
+             (format " %%>%% skimr::skim(%s)"
+                     (mapconcat 'identity (delete-dups (nreverse action)) ",")))
             ('skimr-all
-             " %%>%% skimr::skim()")
+             " %>% skimr::skim()")
             ;; ('summarise
             ;;  (format " %%>%% dplyr::summarise(%s)" action))
             (_
@@ -882,6 +883,11 @@ Optional argument ACTION parameters to the FUN."
              (format " %%>%% dplyr::distinct(%s)" (mapconcat 'identity (delete-dups (nreverse action)) ",")))
             ('slice
              (format " %%>%% dplyr::slice(%s)" action))
+            ('skimr
+             (format " %%>%% skimr::skim(%s)"
+                     (mapconcat 'identity (delete-dups (nreverse action)) ",")))
+            ('skimr-all
+             " %>% skimr::skim()")
             ;; ('summarise
             ;;  (format " %%>%% dplyr::summarise(%s)" action))
             (_
@@ -1177,6 +1183,11 @@ Optional argument ACTION Parameter (R script) for FUN, e.g., columns for count."
                  (format " %%>%% .[, .SD[%s], by = .(%s)]" action
                          ess-view-data--group)
                (error "Group is required for data.table+magrittr")))
+            ('skimr
+             (format " %%>%% skimr::skim(%s)"
+                     (mapconcat 'identity (delete-dups (nreverse action)) ",")))
+            ('skimr-all
+             " %>% skimr::skim()")
             ('summarise
              (format " %%>%% %s" action))
             (_
