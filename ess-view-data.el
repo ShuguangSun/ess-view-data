@@ -1842,7 +1842,7 @@ Argument INDIRECT Indirect buffter to edit the parameters or verbs."
 
 
 (defun ess-view-data-verbs (verb)
-  "Select the verb to do."
+  "Select the VERB to do."
   (interactive (list (completing-read
                       "verb: "
 				      (append ess-view-data-verb-update-list
