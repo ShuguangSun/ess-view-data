@@ -42,6 +42,12 @@
 
 ;; ess-view-data-set-backend: change backend
 ;; ess-view-data-toggle-maxprint: toggle limitation of lines per page to print
+
+;; ess-view-data-verbs
+
+;; Example: In the ESS-V buffer, `M-x ess-view-data-verbs` and select the verb
+;; to do with.
+
 ;; ess-view-data-filter
 
 ;; Example: In the ESS-V buffer, `M-x ess-view-data-filter`, `cyl <RET> mpg` to
@@ -209,6 +215,22 @@
     (data.table+magrittr . (:desc "-%s" :slice "pos, like 1, 1:5, .N: ")))
   "List of backends.")
 
+(defvar ess-view-data-verb-update-list
+  (list "select" "unselect" "sort" "group" "ungroup" "slice")
+  "List of verbs which can change the data.")
+
+(defvar ess-view-data-verb-update-indirect-list
+  (list "filter" "mutate" "transmute"
+        "wide2long" "long2wide" "wide2long-pivot_longer" "long2wide-pivot_wider")
+  "List of verbs which can change the data.")
+
+(defvar ess-view-data-verb-summarise-list
+  (list "count" "unique" "slice" "summarise")
+  "List of verbs which do summarise.")
+
+(defvar ess-view-data-verb-summarise-indirect-list
+  (list "count" "unique" "slice" "summarise")
+  "List of verbs which do summarise.")
 
 (defvar-local ess-view-data-object nil
   "Cache of object name.")
@@ -1797,6 +1819,30 @@ Argument INDIRECT Indirect buffter to edit the parameters or verbs."
   "Ess view data do summarise."
   (interactive)
   (ess-view-data-do-apply 'summarise 'overview t nil))
+
+
+(defun ess-view-data-verbs (verb)
+  "Select the verb to do."
+  (interactive (list (completing-read
+                      "verb: "
+				      (append ess-view-data-verb-update-list
+                              ess-view-data-verb-update-indirect-list
+                              ess-view-data-verb-summarise-list
+                              ess-view-data-verb-summarise-indirect-list
+                              '("reset"))
+				      nil t)))
+  (cond
+   ((member verb ess-view-data-verb-update-list)
+    (ess-view-data-do-apply 'update (intern verb) nil nil))
+   ((member verb ess-view-data-verb-update-indirect-list)
+    (ess-view-data-do-apply 'update (intern verb) t nil))
+   ((member verb ess-view-data-verb-summarise-list)
+    (ess-view-data-do-apply 'summarise (intern verb) nil nil))
+   ((member verb ess-view-data-verb-summarise-indirect-list)
+    (ess-view-data-do-apply 'summarise (intern verb) t nil))
+   ((string= verb "reset")
+    (ess-view-data-do-apply 'reset 'reset t nil))))
+
 
 
 (defun ess-view-data-commit-abort ()
