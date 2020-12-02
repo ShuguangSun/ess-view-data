@@ -374,8 +374,7 @@ Optional argument PROC-NAME The name of associated ESS process, usually `ess-loc
 Optional argument PROC The assciated ESS process."
   (let ((obj-space-p (string-match-p ess-view-data-objname-regex ess-view-data-object))
         (obj-back-quote-p (string-match-p "`" ess-view-data-object))
-        (obj-back-quote (replace-regexp-in-string "`" "" ess-view-data-object))
-        tmpdata)
+        (obj-back-quote (replace-regexp-in-string "`" "" ess-view-data-object)))
   (unless ess-view-data-history
     (setq ess-view-data-history
           (format (cond (obj-back-quote-p "as_tibble(%s)")
@@ -391,16 +390,14 @@ Optional argument PROC The assciated ESS process."
                   (make-temp-name obj-back-quote)))
     (when (and proc-name proc
                (not (process-get proc 'busy)))
-      (setq tmpdata ess-view-data-temp-object)
-      (ess-r--without-format-command
-        (ess-command (concat "library(dplyr); "
-                             tmpdata " <- as_tibble("
-                             (format (cond (obj-back-quote-p "`%s`")
-                                           (obj-space-p "`%s`")
-                                           (t "`%s`"))
-                                     obj-back-quote)
-                             ")\n")
-                     nil nil nil nil proc)))))
+      (ess-command (concat "{library(dplyr); "
+                           ess-view-data-temp-object " <- as_tibble("
+                           (format (cond (obj-back-quote-p "`%s`")
+                                         (obj-space-p "`%s`")
+                                         (t "`%s`"))
+                                   obj-back-quote)
+                           ")}\n")
+                   nil nil nil nil proc))))
   (cl-pushnew ess-view-data-temp-object ess-view-data-temp-object-list)
   (delete-dups ess-view-data-temp-object-list))
 
@@ -745,8 +742,7 @@ Optional argument PROC-NAME The name of associated ESS process, usually `ess-loc
 Optional argument PROC The assciated ESS process."
   (let ((obj-space-p (string-match-p ess-view-data-objname-regex ess-view-data-object))
         (obj-back-quote-p (string-match-p "`" ess-view-data-object))
-        (obj-back-quote (replace-regexp-in-string "`" "" ess-view-data-object))
-        tmpdata)
+        (obj-back-quote (replace-regexp-in-string "`" "" ess-view-data-object)))
   (unless ess-view-data-history
     (setq ess-view-data-history
           (format (cond (obj-back-quote-p "as_tibble(%s)")
@@ -763,16 +759,14 @@ Optional argument PROC The assciated ESS process."
     (ess-view-data-make-safe-dir ess-view-data-cache-directory)
     (when (and proc-name proc
                (not (process-get proc 'busy)))
-      (setq tmpdata ess-view-data-temp-object)
-      (ess-r--without-format-command
-        (ess-command (concat "library(dplyr);  library(DT); "
-                             tmpdata " <- as_tibble("
-                             (format (cond (obj-back-quote-p "`%s`")
-                                           (obj-space-p "`%s`")
-                                           (t "`%s`"))
-                                     obj-back-quote)
-                             ")\n")
-                     nil nil nil nil proc)))))
+      (ess-command (concat "{library(dplyr);  library(DT); "
+                           ess-view-data-temp-object " <- as_tibble("
+                           (format (cond (obj-back-quote-p "`%s`")
+                                         (obj-space-p "`%s`")
+                                         (t "`%s`"))
+                                   obj-back-quote)
+                           ")}\n")
+                   nil nil nil nil proc))))
   (cl-pushnew ess-view-data-temp-object ess-view-data-temp-object-list)
   (delete-dups ess-view-data-temp-object-list))
 
@@ -1038,8 +1032,7 @@ Optional argument PROC-NAME The name of associated ESS process, usually `ess-loc
 Optional argument PROC The assciated ESS process."
   (let ((obj-space-p (string-match-p ess-view-data-objname-regex ess-view-data-object))
         (obj-back-quote-p (string-match-p "`" ess-view-data-object))
-        (obj-back-quote (replace-regexp-in-string "`" "" ess-view-data-object))
-        tmpdata)
+        (obj-back-quote (replace-regexp-in-string "`" "" ess-view-data-object)))
   (unless ess-view-data-history
     (setq ess-view-data-history
           (format (cond (obj-back-quote-p "as.data.table(%s)")
@@ -1055,16 +1048,14 @@ Optional argument PROC The assciated ESS process."
                   (make-temp-name obj-back-quote)))
     (when (and proc-name proc
                (not (process-get proc 'busy)))
-      (setq tmpdata ess-view-data-temp-object)
-      (ess-r--without-format-command
-        (ess-command (concat "library(magrittr);library(data.table); "
-                             ess-view-data-temp-object " <- as.data.table("
-                             (format (cond (obj-back-quote-p "`%s`")
-                                           (obj-space-p "`%s`")
-                                           (t "`%s`"))
-                                     obj-back-quote)
-                             ")\n")
-                     nil nil nil nil proc)))))
+      (ess-command (concat "{library(magrittr);library(data.table); "
+                           ess-view-data-temp-object " <- as.data.table("
+                           (format (cond (obj-back-quote-p "`%s`")
+                                         (obj-space-p "`%s`")
+                                         (t "`%s`"))
+                                   obj-back-quote)
+                           ")}\n")
+                   nil nil nil nil proc))))
   (cl-pushnew ess-view-data-temp-object ess-view-data-temp-object-list)
   (delete-dups ess-view-data-temp-object-list))
 
@@ -1624,8 +1615,7 @@ Can be called only when the current buffer is an edit-indirect buffer."
                (ess-view-data--do-summarise ess-view-data-current-backend fun command))
               ('reset
                (ess-view-data--do-reset ess-view-data-current-backend command))))
-      (ess-r--without-format-command
-        (ess-command (cdr command) parent-buffer nil nil nil proc))
+      (ess-command (concat "{" (cdr command) "}") parent-buffer nil nil nil proc)
       (ess-write-to-dribble-buffer (format "[ESS-v] %s.\n" (symbol-name fun)))
       (with-current-buffer parent-buffer
         (when (memq type '(update reset))
@@ -1726,8 +1716,7 @@ Argument INDIRECT Indirect buffter to edit the parameters or verbs."
                    (ess-view-data--do-summarise ess-view-data-current-backend fun obj-list)))))
         (when (and proc-name proc command
                    (not (process-get proc 'busy)))
-          (ess-r--without-format-command
-            (ess-command (cdr command) buf nil nil nil proc))
+          (ess-command (concat "{" (cdr command) "}") buf nil nil nil proc)
           (ess-write-to-dribble-buffer (format "[ESS-v] %s.\n" (symbol-name fun)))
           (with-current-buffer buf
             (when (eql type 'update)
@@ -1904,8 +1893,7 @@ Optional argument PNUMBER pange number to go."
 
     (when (and proc-name proc command
                (not (process-get proc 'busy)))
-      (ess-r--without-format-command
-        (ess-command (cdr command) buf nil nil nil proc))
+      (ess-command (concat "{" (cdr command) "}") buf nil nil nil proc)
       (with-current-buffer buf
         (goto-char (point-min))
         ;; (toggle-truncate-lines 1)
@@ -1971,8 +1959,7 @@ Optional argument PNUMBER The page number to go to."
               (ess-view-data-do-save ess-view-data-current-save-backend (car file-name))))
     (when (and proc-name proc command
                (not (process-get proc 'busy)))
-      (ess-r--without-format-command
-        (ess-command (cdr command) nil nil nil nil proc))
+      (ess-command (concat "{" (cdr command) "}") nil nil nil nil proc)
       (ess-write-to-dribble-buffer "[ESS-v] Saved.\n")
       (ess-write-to-dribble-buffer (format "# Trace: %s\n" ess-view-data-history))
       (ess-write-to-dribble-buffer (format "# Last: %s\n" (car command)))
@@ -2012,8 +1999,7 @@ Optional argument MAXPRINT if non-nil, 100 rows/lines per page; if t, shwo all."
 
     (when (and proc-name proc
                (not (process-get proc 'busy)))
-      (ess-r--without-format-command
-        (ess-command (cdr command) buf nil nil nil proc))
+      (ess-command (concat "{" (cdr command) "}") buf nil nil nil proc)
       (ess-write-to-dribble-buffer "[ESS-v] Print.\n")
       (ess-write-to-dribble-buffer (format "# Trace: %s\n" ess-view-data-history))
       (with-current-buffer buf
@@ -2113,8 +2099,7 @@ Optional argument MAXPRINT maxprint."
                            ")\n"))
     (when (and proc-name proc command
                (not (process-get proc 'busy)))
-      (ess-r--without-format-command
-        (ess-command command nil nil nil nil proc)))
+      (ess-command (concat "{" command "}") nil nil nil nil proc))
     (setq ess-view-data-temp-object-list '(ess-view-data-temp-object))))
 
 
