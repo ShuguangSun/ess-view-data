@@ -390,7 +390,7 @@ Optional argument PROC The assciated ESS process."
                   (make-temp-name obj-back-quote)))
     (when (and proc-name proc
                (not (process-get proc 'busy)))
-      (ess-command (concat "{library(dplyr); "
+      (ess-command (concat "{suppressPackageStartupMessages(require(dplyr)); "
                            ess-view-data-temp-object " <- as_tibble("
                            (format (cond (obj-back-quote-p "`%s`")
                                          (obj-space-p "`%s`")
@@ -417,7 +417,7 @@ Optional argument PROC The assciated ESS process."
       (forward-line)
       (setq lin (1+ lin)))
     (unless (fboundp 'csv-header-line) (require 'csv-mode nil t))
-    (unless (fboundp 'csv-header-line)
+    (when (fboundp 'csv-header-line)
       (setq csv--header-line nil)
       (csv-header-line lin)))
   (goto-char (point-min)))
@@ -759,7 +759,8 @@ Optional argument PROC The assciated ESS process."
     (ess-view-data-make-safe-dir ess-view-data-cache-directory)
     (when (and proc-name proc
                (not (process-get proc 'busy)))
-      (ess-command (concat "{library(dplyr);  library(DT); "
+      (ess-command (concat "{suppressPackageStartupMessages(require(dplyr));"
+                           "suppressPackageStartupMessages(require(DT)); "
                            ess-view-data-temp-object " <- as_tibble("
                            (format (cond (obj-back-quote-p "`%s`")
                                          (obj-space-p "`%s`")
@@ -1048,7 +1049,8 @@ Optional argument PROC The assciated ESS process."
                   (make-temp-name obj-back-quote)))
     (when (and proc-name proc
                (not (process-get proc 'busy)))
-      (ess-command (concat "{library(magrittr);library(data.table); "
+      (ess-command (concat "{suppressPackageStartupMessages(require(magrittr));"
+                           "suppressPackageStartupMessages(require(data.table)); "
                            ess-view-data-temp-object " <- as.data.table("
                            (format (cond (obj-back-quote-p "`%s`")
                                          (obj-space-p "`%s`")
@@ -1069,7 +1071,7 @@ Optional argument PROC The assciated ESS process."
       (forward-line)
       (setq lin (1+ lin)))
     (unless (fboundp 'csv-header-line) (require 'csv-mode nil t))
-    (unless (fboundp 'csv-header-line)
+    (when (fboundp 'csv-header-line)
       (setq csv--header-line nil)
       (csv-header-line lin)))
   (goto-char (point-min)))
