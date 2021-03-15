@@ -419,7 +419,7 @@ Optional argument PROC The assciated ESS process."
     (unless (fboundp 'csv-header-line) (require 'csv-mode nil t))
     (when (fboundp 'csv-header-line)
       (setq csv--header-line nil)
-      (csv-header-line lin)))
+      (with-no-warnings (csv-header-line lin))))
   (goto-char (point-min)))
 
 (cl-defmethod ess-view-data-get-total-page ((_backend (eql dplyr)) proc-name proc)
@@ -1073,7 +1073,7 @@ Optional argument PROC The assciated ESS process."
     (unless (fboundp 'csv-header-line) (require 'csv-mode nil t))
     (when (fboundp 'csv-header-line)
       (setq csv--header-line nil)
-      (csv-header-line lin)))
+      (with-no-warnings (csv-header-line lin))))
   (goto-char (point-min)))
 
 (cl-defmethod ess-view-data-get-total-page ((_backend (eql data.table+magrittr)) proc-name proc)
