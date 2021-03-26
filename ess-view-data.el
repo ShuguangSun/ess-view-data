@@ -112,7 +112,8 @@
   :type 'string
   :group 'ess-view-data)
 
-(defcustom ess-view-data-objname-regex "[ ,]"
+;; FIXME: r symbol name
+(defcustom ess-view-data-objname-regex "^[^a-zA-Z]\\|[^.a-zA-z0-9]+"
   "Object name needs to be back quoted."
   :type 'string
   :group 'ess-view-data)
