@@ -1,0 +1,12 @@
+; -*- mode: emacs-lisp; lexical-binding: t -*-
+
+(eldev-require-version "0.5")
+
+;; For `let-alist' on older Emacs versions.
+(eldev-use-package-archive 'gnu)
+(eldev-use-package-archive 'melpa)
+
+(eldev-use-plugin 'autoloads)
+
+;; Avoid including files in test "projects".
+(setf eldev-standard-excludes (append eldev-standard-excludes '("./test/*/")))
