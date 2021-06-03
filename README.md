@@ -1,5 +1,7 @@
 [![MELPA](https://melpa.org/packages/ess-view-data-badge.svg)](https://melpa.org/#/ess-view-data)
 [![MELPA Stable](https://stable.melpa.org/packages/ess-view-data-badge.svg)](https://stable.melpa.org/#/ess-view-data)
+[![Build Status](https://github.com/ShuguangSun/ess-view-data/workflows/CI/badge.svg)](https://github.com/ShuguangSun/ess-view-data/actions)
+[![License](http://img.shields.io/:license-gpl3-blue.svg)](http://www.gnu.org/licenses/gpl-3.0.html)
 
 # ess-view-data
 
