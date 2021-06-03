@@ -1,3 +1,6 @@
+[![MELPA](https://melpa.org/packages/ess-view-data-badge.svg)](https://melpa.org/#/ess-view-data)
+[![MELPA Stable](https://stable.melpa.org/packages/ess-view-data-badge.svg)](https://stable.melpa.org/#/ess-view-data)
+
 # ess-view-data
 
 To do tidyverse-like view and manipulate data in ESS and R.
