@@ -262,6 +262,31 @@
   "The candidate for completion.")
 
 
+;;; Indirect Buffers Minor Mode
+(defvar ess-view-data-edit-mode-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map "\C-c'" #'ess-view-data-do-commit)
+    (define-key map "\C-c\C-k" #'ess-view-data-commit-abort)
+    (define-key map "\C-c\C-i" #'ess-view-data-complete-object)
+    (define-key map "\C-c\C-l" #'ess-view-data-complete-data)
+    (define-key map "\C-c\C-a" #'ess-view-data-insert-all-cols)
+    (define-key map "\C-c\C-v" #'ess-view-data-insert-all-values)
+    map)
+  "Keymap for `ess-view-data-edit-mode', a minor mode.")
+
+(defvar ess-view-data-edit-mode-hook nil
+  "Hook for the `ess-view-data-edit-mode' minor mode.")
+
+(define-minor-mode ess-view-data-edit-mode
+  "Minor mode for special key bindings in a ess-view-data-edit buffer.
+
+Turning on this mode runs the normal hook `ess-view-data-edit-mode-hook'."
+  :lighter " Evd"
+  (setq-local
+   header-line-format
+   (substitute-command-keys
+    "Edit, then exit with `\\[ess-view-data-do-commit] '' or abort with `\\[ess-view-data-commit-abort]'")))
+
 ;;; Utils
 
 ;;; Backend Access API
@@ -676,14 +701,7 @@ Optional argument PROC-NAME The name of associated ESS process, usually `ess-loc
       (setq ess-local-process-name proc-name)
       (setq ess-view-data-temp-object
             (buffer-local-value 'ess-view-data-temp-object parent-buf))
-      (setq-local header-line-format
-	              "Edit, then exit with `C-c '' or abort with `C-c C-k'")
-      (local-set-key "\C-c'" #'ess-view-data-do-commit)
-      (local-set-key "\C-c\C-k" #'ess-view-data-commit-abort)
-      (local-set-key "\C-c\C-i" #'ess-view-data-complete-object)
-      (local-set-key "\C-c\C-l" #'ess-view-data-complete-data)
-      (local-set-key (kbd "C-c C-a") #'ess-view-data-insert-all-cols)
-      (local-set-key (kbd "C-c C-v") #'ess-view-data-insert-all-values))
+      (ess-view-data-edit-mode))
     (select-window (display-buffer buf))))
 
 
@@ -995,14 +1013,7 @@ Optional argument PROC-NAME The name of associated ESS process, usually `ess-loc
       (setq ess-local-process-name proc-name)
       (setq ess-view-data-temp-object
             (buffer-local-value 'ess-view-data-temp-object parent-buf))
-      (setq-local header-line-format
-	              "Edit, then exit with `C-c '' or abort with `C-c C-k'")
-      (local-set-key "\C-c'" #'ess-view-data-do-commit)
-      (local-set-key "\C-c\C-k" #'ess-view-data-commit-abort)
-      (local-set-key "\C-c\C-i" #'ess-view-data-complete-object)
-      (local-set-key "\C-c\C-l" #'ess-view-data-complete-data)
-      (local-set-key (kbd "C-c C-a") #'ess-view-data-insert-all-cols)
-      (local-set-key (kbd "C-c C-v") #'ess-view-data-insert-all-values))
+      (ess-view-data-edit-mode))
     (select-window (display-buffer buf))))
 
 
@@ -1319,14 +1330,7 @@ Optional argument PROC-NAME The name of associated ESS process, usually `ess-loc
       (setq ess-local-process-name proc-name)
       (setq ess-view-data-temp-object
             (buffer-local-value 'ess-view-data-temp-object parent-buf))
-      (setq-local header-line-format
-	              "Edit, then exit with `C-c '' or abort with `C-c C-k'")
-      (local-set-key "\C-c'" #'ess-view-data-do-commit)
-      (local-set-key "\C-c\C-k" #'ess-view-data-commit-abort)
-      (local-set-key "\C-c\C-i" #'ess-view-data-complete-object)
-      (local-set-key "\C-c\C-l" #'ess-view-data-complete-data)
-      (local-set-key (kbd "C-c C-a") #'ess-view-data-insert-all-cols)
-      (local-set-key (kbd "C-c C-v") #'ess-view-data-insert-all-values))
+      (ess-view-data-edit-mode))
     (select-window (display-buffer buf))))
 
 
