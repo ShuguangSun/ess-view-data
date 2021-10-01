@@ -1697,17 +1697,19 @@ Argument INDIRECT Indirect buffter to edit the parameters or verbs."
               (setq obj (funcall ess-view-data-read-string "key"  objs))
               (setq objs2 (funcall ess-view-data-read-string "value"  objs))
               (setq obj-list (list obj objs2)))
-          (while (not (equal obj ""))
-            (setq obj (funcall ess-view-data-read-string
-                               (format "Variable (%s), C-j to finish"
-                                       (mapconcat 'identity
-                                                  (setq objs2 (nreverse objs2))
-                                                  ","))
-                               objs))
-            (unless (equal obj "")
-              (setq objs (delete obj objs))
-              (cl-pushnew obj obj-list)
-              (cl-pushnew obj objs2)))))
+          (if (equal ess-view-data-read-string 'completing-read)
+              (setq obj-list (nreverse (completing-read-multiple "Select Variables: " objs)))
+            (while (not (equal obj ""))
+              (setq obj (funcall ess-view-data-read-string
+                                 (format "Variable (%s), C-j to finish"
+                                         (mapconcat 'identity
+                                                    (setq objs2 (nreverse objs2))
+                                                    ","))
+                                 objs))
+              (unless (equal obj "")
+                (setq objs (delete obj objs))
+                (cl-pushnew obj obj-list)
+                (cl-pushnew obj objs2))))))
       (if indirect
           (when obj-list
             (ess-view-data--create-indirect-buffer ess-view-data-current-backend
