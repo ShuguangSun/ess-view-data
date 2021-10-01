@@ -16,9 +16,7 @@ jobs:
     strategy:
       matrix:
         emacs_version:
-          - 26.3
           - 27.2
-          - snapshot
 
     steps:
     - name: Setup GNU Emacs
