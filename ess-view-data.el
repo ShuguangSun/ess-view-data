@@ -38,7 +38,7 @@
 ;; ess-view-data-print: the main function to view data
 
 ;; Example: In a ess-r buffer or a Rscript buffer, `M-x ess-view-data-print`
-;; and input `mtcars`,
+;; and input `mtcars`.
 
 ;; ess-view-data-set-backend: change backend
 ;; ess-view-data-toggle-maxprint: toggle limitation of lines per page to print
@@ -51,7 +51,7 @@
 ;; ess-view-data-filter
 
 ;; Example: In the ESS-V buffer, `M-x ess-view-data-filter`, `cyl <RET> mpg` to
-;; select columns and <C-j> to finish input. An indirect buffer pops up and
+;; select columns and <C-j> to finish input.  An indirect buffer pops up and
 ;; 'data-masking' Expressions can be edited.
 
 ;; ess-view-data-select / ess-view-data-unselect
@@ -74,7 +74,7 @@
 ;; ess-view-data-count
 
 ;; Example: In the ESS-V buffer, `M-x ess-view-data-count`, `cyl <RET> mpg` to
-;; select columns and <C-j> to finish input. In the updated buffer with count
+;; select columns and <C-j> to finish input.  In the updated buffer with count
 ;; information, `M-x ess-view-data-print` to go back.
 
 ;; ess-view-data-summarise
@@ -1019,7 +1019,7 @@ Optional argument PROC-NAME The name of associated ESS process, usually `ess-loc
 
 
 (cl-defmethod ess-view-data-do-goto-page ((_backend (eql dplyr+DT)) page &optional pnumber)
-  "Goto PAGE. Just reset `ess-view-data-page-number' when backend is dplyr+DT.
+  "Goto PAGE.  Just reset `ess-view-data-page-number' when backend is dplyr+DT.
 
 Optional argument PNUMBER The page number to go to."
   (let (result)
@@ -1653,7 +1653,10 @@ Can be called only when the current buffer is an edit-indirect buffer."
 
 Argument TYPE Action type, e.g., update, reset, summarise.
 Argument FUN Action function to do with data, e.g., select, count, etc..
-Argument INDIRECT Indirect buffter to edit the parameters or verbs."
+Argument INDIRECT Indirect buffter to edit the parameters or verbs.
+Optional argument DESC if non-nil, then descending.
+Optional argument TRANS if non-nil, read key and value for tranform.
+Optional argument PROMPT prompt for `read-string'."
   (unless (and ;; (string= "R" ess-dialect)
            ess-local-process-name)
     (error "Not in an R buffer with attached process"))
