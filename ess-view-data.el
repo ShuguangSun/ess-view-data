@@ -113,7 +113,7 @@
   :group 'ess-view-data)
 
 ;; FIXME: r symbol name
-(defcustom ess-view-data-objname-regex "^[^a-zA-Z]\\|[^.a-zA-z0-9]+"
+(defcustom ess-view-data-objname-regex "^[^a-zA-Z]\\|[^.a-zA-Z0-9]+"
   "Object name needs to be back quoted."
   :type 'string
   :group 'ess-view-data)
@@ -439,7 +439,7 @@ Optional argument PROC The assciated ESS process."
   ;;     (delete-region (point-min) (1+ (line-end-position))))
   (let ((lin 1))
     (while ;; (looking-at-p "^\\(+\\|#\\)")
-        (search-forward-regexp "^\\(+\\|#\\)" nil t)
+        (search-forward-regexp "^\\([+]\\|#\\)" nil t)
       (forward-line)
       (setq lin (1+ lin)))
     (unless (fboundp 'csv-header-line) (require 'csv-mode nil t))
@@ -628,6 +628,7 @@ Optional argument PNUMBER The page number to go to."
 (defvar-local ess-view-data--parent-buffer nil)
 (defvar-local ess-view-data--reset-buffer-p nil)
 (defvar-local ess-view-data--action nil)
+(defvar-local ess-local-process-name nil)
 
 (cl-defmethod ess-view-data--create-indirect-buffer
   ((_backend (eql dplyr))
@@ -1079,7 +1080,7 @@ Optional argument PROC The assciated ESS process."
   (goto-char (point-min))
   (let ((lin 1))
     (while ;; (looking-at-p "^\\(+\\|#\\)")
-        (search-forward-regexp "^\\(+\\|#\\)" nil t)
+        (search-forward-regexp "^\\([+]\\|#\\)" nil t)
       (forward-line)
       (setq lin (1+ lin)))
     (unless (fboundp 'csv-header-line) (require 'csv-mode nil t))
