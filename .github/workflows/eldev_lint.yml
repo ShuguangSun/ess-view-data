@@ -1,0 +1,38 @@
+name: Eldevlint
+
+on:
+  push:
+    paths-ignore:
+      - '**.md'
+      - '**.gif'
+      - '.aspell.en.pws'
+  pull_request:
+    paths-ignore:
+      - '**.md'
+      - '**.gif'
+      - '.aspell.en.pws'
+      - '.github'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        emacs_version:
+          - 27.2
+
+    steps:
+    - name: Setup GNU Emacs
+      uses: purcell/setup-emacs@master
+      with:
+        version: ${{ matrix.emacs_version }}
+
+    - name: Install Eldev
+      run: curl -fsSL https://raw.github.com/doublep/eldev/master/webinstall/github-eldev | sh
+
+    - name: Checkout
+      uses: actions/checkout@v2
+
+    - name: Test
+      run: |
+        eldev lint
