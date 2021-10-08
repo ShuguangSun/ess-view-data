@@ -1191,8 +1191,8 @@ Optional argument ACTION Parameter (R script) for FUN, e.g., columns for count."
              (format " %%>%% .[, .N, by = .(%s)] "
                      (mapconcat 'identity (delete-dups (nreverse action)) ",")))
             ('unique
-             (format " %%>%% unique(., by = .(%s))"
-                     (mapconcat 'identity (delete-dups (nreverse action)) ",")))
+             (format " %%>%% unique(., by = c(\"%s\"))"
+                     (mapconcat 'identity (delete-dups (nreverse action)) "\",\"")))
             ('slice
              (if ess-view-data--group
                  (format " %%>%% .[, .SD[%s], by = .(%s)]" action
