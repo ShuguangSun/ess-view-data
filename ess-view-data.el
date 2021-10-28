@@ -392,17 +392,28 @@ Argument STR R script to run.")
    (format
     (concat
      "op.tmp <- options(\"width\", \"tibble.width\", \"crayon.enabled\");"
-     (if ess-view-data-tibble-crayon-enabled-p
-         "options(tibble.width = Inf, width = %d);"
-       "options(tibble.width = Inf, width = %d, crayon.enabled = FALSE);"))
+     "options(tibble.width = Inf, width = %d, crayon.enabled = FALSE);")
     ess-view-data-options-width)
    "print(%s, n = nrow(%s));"
    "options(op.tmp)")
   "Format string for print.")
 
+(defvar ess-view-data--print-format-with-crayon
+  (concat
+   (format
+    (concat
+     "op.tmp <- options(\"width\", \"tibble.width\", \"crayon.enabled\");"
+     "options(tibble.width = Inf, width = %d);")
+    ess-view-data-options-width)
+   "print(%s, n = nrow(%s));"
+   "options(op.tmp)")
+  "Format string for print, with crayon.enabled for tibble.")
+
 (cl-defmethod ess-view-data--do-print ((_backend (eql print)))
   "Do print using print."
-  ess-view-data--print-format)
+  (if ess-view-data-tibble-crayon-enabled-p
+      ess-view-data--print-format-with-crayon
+    ess-view-data--print-format))
 
 ;;; * kable-backend: kable
 (defvar ess-view-data--kable-format
@@ -2019,6 +2030,30 @@ Optional argument PNUMBER The page number to go to."
 
 
 ;; utilities
+(defun ess-view-data-quit ()
+  "Quit from ess-view-data."
+  (interactive)
+  (kill-buffer))
+
+(defun ess-view-data-kill-buffer-hook ()
+  "Hook for `kill-buffer' to clean environment."
+  (let* ((proc-name (buffer-local-value 'ess-local-process-name (current-buffer)))
+         (proc (get-process proc-name)))
+    (ess-view-data-do-kill-buffer-hook ess-view-data-current-backend proc-name proc)))
+
+
+(define-minor-mode ess-view-data-mode
+  "ess-view-data"
+  :global nil
+  :group 'ess-view-data
+  :keymap ess-view-data-mode-map
+  :lighter " ESS-V"
+  (if ess-view-data-mode
+      (progn
+        (require 'ansi-color)
+        (ansi-color-apply-on-region (point-min) (point-max))
+        (setq buffer-read-only t)
+        (add-hook 'kill-buffer-hook #'ess-view-data-kill-buffer-hook nil t))))
 
 (defun ess-view-data-print-ex (&optional obj proc-name maxprint)
   "Do print.
@@ -2068,29 +2103,6 @@ Optional argument MAXPRINT if non-nil, 100 rows/lines per page; if t, shwo all."
       buf)))
 
 
-(defun ess-view-data-quit ()
-  "Quit from ess-view-data."
-  (interactive)
-  (kill-buffer))
-
-(defun ess-view-data-kill-buffer-hook ()
-  "Hook for `kill-buffer' to clean environment."
-  (let* ((proc-name (buffer-local-value 'ess-local-process-name (current-buffer)))
-         (proc (get-process proc-name)))
-    (ess-view-data-do-kill-buffer-hook ess-view-data-current-backend proc-name proc)))
-
-
-
-(define-minor-mode ess-view-data-mode
-  "ess-view-data"
-  :global nil
-  :group 'ess-view-data
-  :keymap ess-view-data-mode-map
-  :lighter " ESS-V"
-  (if ess-view-data-mode
-    (progn
-      (setq buffer-read-only t)
-      (add-hook 'kill-buffer-hook #'ess-view-data-kill-buffer-hook nil t))))
 
 ;;;###autoload
 (defun ess-view-data-print (&optional maxprint)
