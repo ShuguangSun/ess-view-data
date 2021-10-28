@@ -482,7 +482,6 @@ Optional argument PROC The assciated ESS process."
   ;; (if (looking-at "# A tibble:")
   ;;     (delete-region (point-min) (1+ (line-end-position))))
   (let ((lin 1))
-    (print (buffer-string))
     (while ;; (looking-at-p "^\\(+\\|#\\)")
         (search-forward-regexp "^\\([+]\\|#\\|[[].+?#\\)" nil t)
       (forward-line)
@@ -1673,6 +1672,7 @@ Can be called only when the current buffer is an edit-indirect buffer."
       (ess-command (concat "{" (cdr command) "}") parent-buffer nil nil nil proc)
       (ess-write-to-dribble-buffer (format "[ESS-v] %s.\n" (symbol-name fun)))
       (with-current-buffer parent-buffer
+        ;; (ansi-color-apply-on-region (point-min) (point-max))
         (when (memq type '(update reset))
           (if (eql type 'reset)
               (setq ess-view-data-history (car command))
@@ -1691,6 +1691,8 @@ Can be called only when the current buffer is an edit-indirect buffer."
           (unless ess-view-data-maxprint-p
                   (insert (format "# Page number: %d / %d\n"
                                   (1+ ess-view-data-page-number) ess-view-data-total-page))))
+        (goto-char (point-min))
+        (ess-view-data-mode 1)
         (goto-char (point-min))
         (ess-view-data--header-line ess-view-data-current-backend)))))
 
@@ -1779,6 +1781,7 @@ Optional argument PROMPT prompt for `read-string'."
           (ess-command (concat "{" (cdr command) "}") buf nil nil nil proc)
           (ess-write-to-dribble-buffer (format "[ESS-v] %s.\n" (symbol-name fun)))
           (with-current-buffer buf
+            ;; (ansi-color-apply-on-region (point-min) (point-max))
             (when (eql type 'update)
               (setq ess-view-data-history (concat ess-view-data-history (car command)))
               (setq ess-view-data-page-number 0)
@@ -1793,6 +1796,8 @@ Optional argument PROMPT prompt for `read-string'."
               (unless ess-view-data-maxprint-p
                       (insert (format "# Page number: %d / %d\n"
                                       (1+ ess-view-data-page-number) ess-view-data-total-page))))
+            (goto-char (point-min))
+            (ess-view-data-mode 1)
             (goto-char (point-min))
             (ess-view-data--header-line ess-view-data-current-backend))))))))
 
@@ -1956,6 +1961,7 @@ Optional argument PNUMBER pange number to go."
       (ess-command (concat "{" (cdr command) "}") buf nil nil nil proc)
       (with-current-buffer buf
         (goto-char (point-min))
+        ;; (ansi-color-apply-on-region (point-min) (point-max))
         ;; (toggle-truncate-lines 1)
         ;; (setq-local scroll-preserve-screen-position t)
         (when ess-view-data-show-code
@@ -1963,6 +1969,8 @@ Optional argument PNUMBER pange number to go."
         (insert (format "# Page number: %d / %d\n"
                         (1+ ess-view-data-page-number)
                         ess-view-data-total-page))
+        (goto-char (point-min))
+        (ess-view-data-mode 1)
         (goto-char (point-min))
         (ess-view-data--header-line ess-view-data-current-backend)))))
 
@@ -2084,6 +2092,7 @@ Optional argument MAXPRINT if non-nil, 100 rows/lines per page; if t, shwo all."
     (when (and proc-name proc
                (not (process-get proc 'busy)))
       (ess-command (concat "{" (cdr command) "}") buf nil nil nil proc)
+      ;; (ansi-color-apply-on-region (point-min) (point-max))
       (ess-write-to-dribble-buffer "[ESS-v] Print.\n")
       (ess-write-to-dribble-buffer (format "# Trace: %s\n" ess-view-data-history))
       (with-current-buffer buf
