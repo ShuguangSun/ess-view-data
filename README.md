@@ -65,6 +65,10 @@ It will put a head information at above:
 - ido-completing-read
 - ivy-completing-read
 
+### ess-view-data-tibble-crayon-enabled-p
+
+set `ess-view-data-tibble-crayon-enabled-p` to `t` (default) will enable crayon
+for tibble if `crayon.enabled` is set in the R's options.
 
 ## Usage
 

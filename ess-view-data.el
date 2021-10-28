@@ -138,7 +138,7 @@
   :type 'boolean
   :group 'ess-view-data)
 
-(defcustom ess-view-data-tibble-crayon-enabled-p nil
+(defcustom ess-view-data-tibble-crayon-enabled-p t
   "Whether to enable crayon for tibble.
 
 If enabled, `ansi-color-for-comint-mode-on' should be turn on."
@@ -403,7 +403,7 @@ Argument STR R script to run.")
    (format
     (concat
      "op.tmp <- options(\"width\", \"tibble.width\", \"crayon.enabled\");"
-     "options(tibble.width = Inf, width = %d);")
+     "options(tibble.width = Inf, width = %d, crayon.enabled = TRUE);")
     ess-view-data-options-width)
    "print(%s, n = nrow(%s));"
    "options(op.tmp)")
@@ -482,8 +482,9 @@ Optional argument PROC The assciated ESS process."
   ;; (if (looking-at "# A tibble:")
   ;;     (delete-region (point-min) (1+ (line-end-position))))
   (let ((lin 1))
+    (print (buffer-string))
     (while ;; (looking-at-p "^\\(+\\|#\\)")
-        (search-forward-regexp "^\\([+]\\|#\\)" nil t)
+        (search-forward-regexp "^\\([+]\\|#\\|[[].+?#\\)" nil t)
       (forward-line)
       (setq lin (1+ lin)))
     (unless (fboundp 'csv-header-line) (require 'csv-mode nil t))
