@@ -421,9 +421,7 @@ Argument STR R script to run.")
    (format
     (concat
      "op.tmp <- options(\"width\", \"tibble.width\", \"crayon.enabled\");"
-     (if ess-view-data-tibble-crayon-enabled-p
-         "options(tibble.width = Inf, width = %d);"
-       "options(tibble.width = Inf, width = %d, crayon.enabled = FALSE);"))
+     "options(tibble.width = Inf, width = %d, crayon.enabled = FALSE);")
     ess-view-data-options-width)
    "print(knitr::kable(%s, n = nrow(%s)));"
    "options(op.tmp)")
