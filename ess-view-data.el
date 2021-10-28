@@ -138,6 +138,13 @@
   :type 'bool
   :group 'ess-view-data)
 
+(defcustom ess-view-data-tibble-crayon-enabled-p nil
+  "Whether to enable crayon for tibble.
+
+If enabled, `ansi-color-for-comint-mode-on' should be turn on."
+  :type 'bool
+  :group 'ess-view-data)
+
 
 (defvar ess-view-data-backend-list
   (list 'dplyr 'dplyr+DT 'data.table+magrittr)
@@ -385,7 +392,9 @@ Argument STR R script to run.")
    (format
     (concat
      "op.tmp <- options(\"width\", \"tibble.width\", \"crayon.enabled\");"
-     "options(tibble.width = Inf, width = %d, crayon.enabled = FALSE);")
+     (if ess-view-data-tibble-crayon-enabled-p
+         "options(tibble.width = Inf, width = %d);"
+       "options(tibble.width = Inf, width = %d, crayon.enabled = FALSE);"))
     ess-view-data-options-width)
    "print(%s, n = nrow(%s));"
    "options(op.tmp)")
@@ -401,7 +410,9 @@ Argument STR R script to run.")
    (format
     (concat
      "op.tmp <- options(\"width\", \"tibble.width\", \"crayon.enabled\");"
-     "options(tibble.width = Inf, width = %d, crayon.enabled = FALSE);")
+     (if ess-view-data-tibble-crayon-enabled-p
+         "options(tibble.width = Inf, width = %d);"
+       "options(tibble.width = Inf, width = %d, crayon.enabled = FALSE);"))
     ess-view-data-options-width)
    "print(knitr::kable(%s, n = nrow(%s)));"
    "options(op.tmp)")
