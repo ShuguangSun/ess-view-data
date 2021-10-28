@@ -262,6 +262,30 @@
   "The candidate for completion.")
 
 
+
+
+(defvar ess-view-data-mode-map
+  (let ((keymap (make-sparse-keymap)))
+    (define-key keymap (kbd "C-c C-p") #'ess-view-data-print-ex)
+    (define-key keymap (kbd "C-c C-t") #'ess-view-data-toggle-maxprint)
+    (define-key keymap (kbd "C-c C-s") #'ess-view-data-select)
+    (define-key keymap (kbd "C-c C-u") #'ess-view-data-unselect)
+    (define-key keymap (kbd "C-c C-f") #'ess-view-data-filter)
+    (define-key keymap (kbd "C-c C-o") #'ess-view-data-sort)
+    ;; (define-key keymap (kbd "C-c C-g") #'ess-view-data-group)
+    ;; (define-key keymap (kbd "C-c C-G") #'ess-view-data-ungroup)
+    (define-key keymap (kbd "C-c C-i") #'ess-view-data-slice)
+    (define-key keymap (kbd "C-c C-l") #'ess-view-data-unique)
+    (define-key keymap (kbd "C-c C-v") #'ess-view-data-summarise)
+    (define-key keymap (kbd "C-c C-r") #'ess-view-data-reset)
+    (define-key keymap (kbd "C-c C-w") #'ess-view-data-save)
+    (define-key keymap (kbd "M-g p") #'ess-view-data-goto-previous-page)
+    (define-key keymap (kbd "M-g n") #'ess-view-data-goto-next-page)
+    (define-key keymap (kbd "M-g f") #'ess-view-data-goto-first-page)
+    (define-key keymap (kbd "M-g l") #'ess-view-data-goto-last-page)
+    keymap)
+  "Keymap for function `ess-view-data-mode'.")
+
 ;;; Indirect Buffers Minor Mode
 (defvar ess-view-data-edit-mode-map
   (let ((map (make-sparse-keymap)))
@@ -2044,29 +2068,6 @@ Optional argument MAXPRINT if non-nil, 100 rows/lines per page; if t, shwo all."
          (proc (get-process proc-name)))
     (ess-view-data-do-kill-buffer-hook ess-view-data-current-backend proc-name proc)))
 
-
-
-(defvar ess-view-data-mode-map
-  (let ((keymap (make-sparse-keymap)))
-    (define-key keymap (kbd "C-c C-p") #'ess-view-data-print-ex)
-    (define-key keymap (kbd "C-c C-t") #'ess-view-data-toggle-maxprint)
-    (define-key keymap (kbd "C-c C-s") #'ess-view-data-select)
-    (define-key keymap (kbd "C-c C-u") #'ess-view-data-unselect)
-    (define-key keymap (kbd "C-c C-f") #'ess-view-data-filter)
-    (define-key keymap (kbd "C-c C-o") #'ess-view-data-sort)
-    ;; (define-key keymap (kbd "C-c C-g") #'ess-view-data-group)
-    ;; (define-key keymap (kbd "C-c C-G") #'ess-view-data-ungroup)
-    (define-key keymap (kbd "C-c C-i") #'ess-view-data-slice)
-    (define-key keymap (kbd "C-c C-l") #'ess-view-data-unique)
-    (define-key keymap (kbd "C-c C-v") #'ess-view-data-summarise)
-    (define-key keymap (kbd "C-c C-r") #'ess-view-data-reset)
-    (define-key keymap (kbd "C-c C-w") #'ess-view-data-save)
-    (define-key keymap (kbd "M-g p") #'ess-view-data-goto-previous-page)
-    (define-key keymap (kbd "M-g n") #'ess-view-data-goto-next-page)
-    (define-key keymap (kbd "M-g f") #'ess-view-data-goto-first-page)
-    (define-key keymap (kbd "M-g l") #'ess-view-data-goto-last-page)
-    keymap)
-  "Keymap for function `ess-view-data-mode'.")
 
 
 (define-minor-mode ess-view-data-mode
