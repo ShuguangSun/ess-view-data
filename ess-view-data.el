@@ -130,19 +130,19 @@
 
 (defcustom ess-view-data-show-code t
   "Show code on top of the view data buffer."
-  :type 'bool
+  :type 'boolean
   :group 'ess-view-data)
 
 (defcustom ess-view-data-write-dribble t
   "Write to dribble for tracking."
-  :type 'bool
+  :type 'boolean
   :group 'ess-view-data)
 
 (defcustom ess-view-data-tibble-crayon-enabled-p nil
   "Whether to enable crayon for tibble.
 
 If enabled, `ansi-color-for-comint-mode-on' should be turn on."
-  :type 'bool
+  :type 'boolean
   :group 'ess-view-data)
 
 
