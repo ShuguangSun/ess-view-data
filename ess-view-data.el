@@ -138,7 +138,7 @@
   :type 'boolean
   :group 'ess-view-data)
 
-(defcustom ess-view-data-tibble-crayon-enabled-p t
+(defcustom ess-view-data-tibble-crayon-enabled-p nil
   "Whether to enable crayon for tibble.
 
 If enabled, `ansi-color-for-comint-mode-on' should be turn on."
