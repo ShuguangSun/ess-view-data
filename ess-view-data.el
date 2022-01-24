@@ -570,7 +570,7 @@ Optional argument ACTION Parameter (R script) for FUN, e.g., columns for select.
 
     (setq ess-view-data-page-number 0)
     (setq cmd (concat
-               ess-view-data-temp-object " <- " ess-view-data-temp-object cmdhist "; "
+               ess-view-data-temp-object " <<- " ess-view-data-temp-object cmdhist "; "
                "local({"
                (format (ess-view-data--do-print ess-view-data-current-update-print-backend)
                        (concat ess-view-data-temp-object
@@ -628,7 +628,7 @@ Optional argument ACTION R script to reset the view process, which will become t
     (setq cmdhist action)
     (setq ess-view-data-page-number 0)
     (setq cmd (concat
-               ess-view-data-temp-object " <- " cmdhist "; "
+               ess-view-data-temp-object " <<- " cmdhist "; "
                "local({"
                (format (ess-view-data--do-print ess-view-data-current-update-print-backend)
                        (concat ess-view-data-temp-object
@@ -920,7 +920,7 @@ Optional argument ACTION parameters to the FUN."
 
     (setq ess-view-data-page-number 0)
     (setq cmd (concat
-               ess-view-data-temp-object " <- " ess-view-data-temp-object cmdhist "; "
+               ess-view-data-temp-object " <<- " ess-view-data-temp-object cmdhist "; "
                "local({"
                (format "DT::saveWidget(datatable(%1$s, filter = 'top' %2$s), file = '%3$s/%4$s.html')\n"
                        ess-view-data-temp-object
@@ -976,7 +976,7 @@ Optional argument ACTION R script to reset the view process, which will become t
     (setq cmdhist action)
     (setq ess-view-data-page-number 0)
     (setq cmd (concat
-               ess-view-data-temp-object " <- " cmdhist "; "
+               ess-view-data-temp-object " <<- " cmdhist "; "
                "local({"
                (format "DT::saveWidget(datatable(%1$s, filter = 'top' %2$s), file = '%3$s/%4$s.html')\n"
                        ess-view-data-temp-object
@@ -1209,7 +1209,7 @@ Optional argument ACTION Parameter (R script) for FUN, e.g., columns for select.
 
     (setq ess-view-data-page-number 0)
     (setq cmd (concat
-               ess-view-data-temp-object " <- " ess-view-data-temp-object cmdhist "; "
+               ess-view-data-temp-object " <<- " ess-view-data-temp-object cmdhist "; "
                "local({"
                (format (ess-view-data--do-print ess-view-data-current-update-print-backend)
                        (concat ess-view-data-temp-object
@@ -1272,7 +1272,7 @@ Optional argument ACTION R script to reset the view process, which will become t
     (setq cmdhist action)
     (setq ess-view-data-page-number 0)
     (setq cmd (concat
-               ess-view-data-temp-object " <- " cmdhist "; "
+               ess-view-data-temp-object " <<- " cmdhist "; "
                "local({"
                (format (ess-view-data--do-print ess-view-data-current-update-print-backend)
                        (concat ess-view-data-temp-object
