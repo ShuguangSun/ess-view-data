@@ -211,7 +211,7 @@ If enabled, `ansi-color-for-comint-mode-on' should be turn on."
   :type `(choice (const :tag "ESS" ess-completing-read)
                  (const :tag "basic" completing-read)
                  (const :tag "ido" ido-completing-read)
-                 (const :tag "ivy" :require 'ivy ivy-completing-read)
+                 (const :tag "ivy" ivy-completing-read)
                  (function :tag "Other"))
   :group 'ess-view-data)
 
