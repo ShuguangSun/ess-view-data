@@ -206,7 +206,7 @@ If enabled, `ansi-color-for-comint-mode-on' should be turn on."
   :group 'ess-view-data)
 
 
-(defcustom ess-view-data-read-string 'basic
+(defcustom ess-view-data-read-string 'ess-completing-read
   "The function used to completing read."
   :type `(choice (const :tag "ESS" ess-completing-read)
                  (const :tag "basic" completing-read)
