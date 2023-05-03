@@ -133,6 +133,11 @@
   :type 'boolean
   :group 'ess-view-data)
 
+(defcustom ess-view-data-show-no-page-number t
+  "Not to show page number on top of the view data buffer."
+  :type 'boolean
+  :group 'ess-view-data)
+
 (defcustom ess-view-data-write-dribble t
   "Write to dribble for tracking."
   :type 'boolean
@@ -1718,9 +1723,10 @@ Can be called only when the current buffer is an edit-indirect buffer."
           (insert (format "# Trace: %s\n" ess-view-data-history))
           (insert (format "# Last: %s\n" (car command))))
         (when (memq type '(update reset))
-          (unless ess-view-data-maxprint-p
+          (unless (or ess-view-data-maxprint-p ess-view-data-show-no-page-number)
                   (insert (format "# Page number: %d / %d\n"
                                   (1+ ess-view-data-page-number) ess-view-data-total-page))))
+        ;; (delete-line)
         (goto-char (point-min))
         (ess-view-data-mode 1)
         (goto-char (point-min))
@@ -1823,9 +1829,10 @@ Optional argument PROMPT prompt for `read-string'."
               (insert (format "# Trace: %s\n" ess-view-data-history))
               (insert (format "# Last: %s\n" (car command))))
             (when (eql type 'update)
-              (unless ess-view-data-maxprint-p
+              (unless (or ess-view-data-maxprint-p ess-view-data-show-no-page-number)
                       (insert (format "# Page number: %d / %d\n"
                                       (1+ ess-view-data-page-number) ess-view-data-total-page))))
+            ;; (delete-line)
             (goto-char (point-min))
             (ess-view-data-mode 1)
             (goto-char (point-min))
@@ -1996,9 +2003,11 @@ Optional argument PNUMBER pange number to go."
         ;; (setq-local scroll-preserve-screen-position t)
         (when ess-view-data-show-code
           (insert (format "# Trace: %s\n" ess-view-data-history)))
-        (insert (format "# Page number: %d / %d\n"
-                        (1+ ess-view-data-page-number)
-                        ess-view-data-total-page))
+        (when ess-view-data-show-no-page-number
+          (insert (format "# Page number: %d / %d\n"
+                          (1+ ess-view-data-page-number)
+                          ess-view-data-total-page)))
+        ;; (delete-line)
         (goto-char (point-min))
         (ess-view-data-mode 1)
         (goto-char (point-min))
@@ -2090,6 +2099,13 @@ Optional argument PNUMBER The page number to go to."
         (require 'ansi-color)
         (ansi-color-apply-on-region (point-min) (point-max))
         (setq buffer-read-only t)
+        (setq mode-line-process
+              '(" ["
+                (:eval (format "%d/%d"
+                               ess-view-data-page-number
+                               ess-view-data-total-page))
+                "]"))
+        (force-mode-line-update)
         (add-hook 'kill-buffer-hook #'ess-view-data-kill-buffer-hook nil t))))
 
 (defun ess-view-data-print-ex (&optional obj proc-name maxprint)
@@ -2131,10 +2147,11 @@ Optional argument MAXPRINT if non-nil, 100 rows/lines per page; if t, shwo all."
         (goto-char (point-min))
         (when ess-view-data-show-code
           (insert (format "# Trace: %s\n" ess-view-data-history)))
-        (unless ess-view-data-maxprint-p
+        (unless (or ess-view-data-maxprint-p ess-view-data-show-no-page-number)
           (insert (format "# Page number: %d / %d\n"
                           (1+ ess-view-data-page-number)
                           ess-view-data-total-page)))
+        ;; (delete-line)
         (goto-char (point-min))
         (ess-view-data--header-line ess-view-data-current-backend)
         (ess-view-data-mode 1))
