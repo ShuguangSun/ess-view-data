@@ -1134,7 +1134,7 @@ Optional argument PROC The associated ESS process."
                (not (process-get proc 'busy)))
       (ess-command (concat "{suppressPackageStartupMessages(require(magrittr));"
                            "suppressPackageStartupMessages(require(data.table)); "
-                           ess-view-data-temp-object " <- as.data.table("
+                           ess-view-data-temp-object " <<- as.data.table("
                            (format (cond (obj-back-quote-p "`%s`")
                                          (obj-space-p "`%s`")
                                          (t "`%s`"))
