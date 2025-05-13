@@ -6,7 +6,7 @@
 ;; Created: 2019/04/06
 ;; Version: 1.3
 ;; URL: https://github.com/ShuguangSun/ess-view-data
-;; Package-Requires: ((emacs "26.1") (ess "18.10.1") (csv-mode "1.12"))
+;; Package-Requires: ((emacs "26.1") (ess "18.10.1") (csv-mode "1.12") (transient "0.3.7"))
 ;; Keywords: tools
 
 ;; This program is free software; you can redistribute it and/or modify
@@ -96,6 +96,7 @@
 (require 'ess-r-completion)
 (require 'subr-x)
 (require 'json)
+(require 'transient)
 
 (defgroup ess-view-data ()
   "ess-view-dat"
@@ -295,8 +296,38 @@ If enabled, `ansi-color-for-comint-mode-on' should be turn on."
     (define-key keymap (kbd "M-g n") #'ess-view-data-goto-next-page)
     (define-key keymap (kbd "M-g f") #'ess-view-data-goto-first-page)
     (define-key keymap (kbd "M-g l") #'ess-view-data-goto-last-page)
+    (define-key keymap (kbd "?") #'ess-view-data-transient)
     keymap)
   "Keymap for function `ess-view-data-mode'.")
+
+(transient-define-prefix ess-view-data-transient ()
+  "ESS View Data commands."
+  [["Navigation"
+   ("n" "Next page" ess-view-data-goto-next-page)
+   ("p" "Previous page" ess-view-data-goto-previous-page)
+   ("F" "First page" ess-view-data-goto-first-page)
+   ("l" "Last page" ess-view-data-goto-last-page)
+   ("g" "Goto page" ess-view-data-goto-page-number)]
+  ["View"
+   ("t" "Toggle maxprint" ess-view-data-toggle-maxprint)
+   ("P" "Print" ess-view-data-print-ex)]
+  ["Data Manipulation"
+   ("s" "Select columns" ess-view-data-select)
+   ("u" "Unselect columns" ess-view-data-unselect)
+   ("f" "Filter rows" ess-view-data-filter)
+   ("o" "Sort" ess-view-data-sort)
+   ("i" "Slice" ess-view-data-slice)
+   ("m" "Mutate" ess-view-data-mutate)
+   ("<tab>" "Long to wide" ess-view-data-long2wide)
+   ("C-<tab>" "Wide to long" ess-view-data-wide2long)]
+  ["Summarize"
+   ("c" "Count" ess-view-data-count)
+   ("U" "Unique" ess-view-data-unique)
+   ("v" "Summarise" ess-view-data-summarise)]
+  ["Other"
+   ("r" "Reset" ess-view-data-reset)
+   ("w" "Save" ess-view-data-save)
+   ("q" "Quit" ess-view-data-quit)]])
 
 ;;; Indirect Buffers Minor Mode
 (defvar ess-view-data-edit-mode-map
