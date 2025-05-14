@@ -221,6 +221,11 @@ If enabled, `ansi-color-for-comint-mode-on' should be turn on."
                  (function :tag "Other"))
   :group 'ess-view-data)
 
+(defcustom ess-view-data-auto-show-transient nil
+  "Whether to automatically show the transient menu when opening an ess-view-data buffer."
+  :type 'boolean
+  :group 'ess-view-data)
+
 
 ;; TODO: configure input functions here
 (defvar ess-view-data-backend-setting
@@ -2137,7 +2142,9 @@ Optional argument PNUMBER The page number to go to."
                                ess-view-data-total-page))
                 "]"))
         (force-mode-line-update)
-        (add-hook 'kill-buffer-hook #'ess-view-data-kill-buffer-hook nil t))))
+        (add-hook 'kill-buffer-hook #'ess-view-data-kill-buffer-hook nil t)
+        (when ess-view-data-auto-show-transient
+          (ess-view-data-transient)))))
 
 (defun ess-view-data-print-ex (&optional obj proc-name maxprint)
   "Do print.
