@@ -323,15 +323,17 @@ If enabled, `ansi-color-for-comint-mode-on' should be turn on."
    ("o" "Sort" ess-view-data-sort)
    ("i" "Slice" ess-view-data-slice)
    ("m" "Mutate" ess-view-data-mutate)
-   ("<tab>" "Long to wide" ess-view-data-long2wide)
-   ("C-<tab>" "Wide to long" ess-view-data-wide2long)]
+   ("<tab>" "Long to wide (pivot_wider)" ess-view-data-long2wide-pivot-wider)
+   ("C-<tab>" "Wide to long (pivot_longer)" ess-view-data-wide2long-pivot-longer)]
   ["Summarize"
    ("c" "Count" ess-view-data-count)
    ("U" "Unique" ess-view-data-unique)
-   ("v" "Summarise" ess-view-data-summarise)]
+   ("v" "Summarise" ess-view-data-summarise)
+   ("S" "Skimr" ess-view-data-skimr)]
   ["Other"
+   ("V" "Any data manipulation verb" ess-view-data-verbs)
    ("r" "Reset" ess-view-data-reset)
-   ("w" "Save" ess-view-data-save)
+   ("w" "Save to csv file" ess-view-data-save)
    ("q" "Quit" ess-view-data-quit)]])
 
 ;;; Indirect Buffers Minor Mode
@@ -1931,12 +1933,23 @@ Optional argument PROMPT prompt for `read-string'."
   (interactive)
   (ess-view-data-do-apply 'update 'wide2long t nil t))
 
+;; wide2long
+(defun ess-view-data-wide2long-pivot-longer ()
+  "Do wide2long using 'pivot_longer'."
+  (interactive)
+  (ess-view-data-do-apply 'update 'wide2long-pivot_longer t nil t))
 
 ;; long2wide
 (defun ess-view-data-long2wide ()
   "Do long2wide."
   (interactive)
   (ess-view-data-do-apply 'update 'long2wide t nil t))
+
+;; long2wide - Pivot_wider
+(defun ess-view-data-long2wide-pivot-wider ()
+  "Do long2wide using 'pivot_wider'."
+  (interactive)
+  (ess-view-data-do-apply 'update 'long2wide-pivot_wider t nil t))
 
 ;; update
 (defun ess-view-data-update ()
