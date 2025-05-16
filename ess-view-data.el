@@ -2223,7 +2223,7 @@ Optional argument MAXPRINT maxprint."
                  ;; (current-word)
                  (funcall ess-view-data-read-string
                   "Object: "
-                  (ess-get-words-from-vector "ls(envir = .GlobalEnv)\n")
+                  (ess-get-words-from-vector "Filter(function(x) inherits(get(x, envir = .GlobalEnv), 'data.frame'), ls(envir = .GlobalEnv))\n")
                   nil nil (current-word)))))
     (pop-to-buffer (ess-view-data-print-ex obj maxprint))))
 
