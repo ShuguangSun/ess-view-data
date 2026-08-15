@@ -13,6 +13,7 @@
 ;;; Code:
 
 (require 'ert)
+(require 'cl-lib)
 (require 'ess-view-data)
 
 (ert-deftest ess-view-data-test-smoke ()
@@ -269,6 +270,158 @@
   "Cells longer than the column width get an ellipsis."
   (should (equal "abc..." (ess-view-data--table-cell "abcdefghij" 6)))
   (should (equal "abc" (ess-view-data--table-cell "abc" 6))))
+
+(ert-deftest ess-view-data-test-completion-col-cache ()
+  "Column names are cached; the first call adopts `--page-cols'."
+  (with-temp-buffer
+    (setq-local ess-view-data-temp-object "`mtcars`")
+    (setq-local ess-view-data--page-cols '("mpg" "cyl"))
+    ;; first call: page-cols are adopted with no R round trip
+    (should (equal '("mpg" "cyl")
+                   (ess-view-data--ensure-completion-cols)))
+    ;; second call: served from the cache
+    (should (equal '("mpg" "cyl")
+                   (ess-view-data--ensure-completion-cols)))
+    ;; dropping the page cache does not hurt once the name cache exists
+    (setq-local ess-view-data--page-cols nil)
+    (should (equal '("mpg" "cyl")
+                   (ess-view-data--ensure-completion-cols)))))
+
+(ert-deftest ess-view-data-test-completion-cols ()
+  "`--completion-cols' returns the cached names of the temp object."
+  (with-temp-buffer
+    (setq-local ess-view-data-temp-object "`mtcars`")
+    (setq ess-view-data-completion-candidate '((obj:mtcars "mpg" "cyl")))
+    (should (equal '("mpg" "cyl") (ess-view-data--completion-cols)))))
+
+(ert-deftest ess-view-data-test-completion-get-vector ()
+  "`--completion-get' converts vector values for convenience."
+  (with-temp-buffer
+    (setq ess-view-data-completion-candidate '((col:cyl . ["4" "6" "8"])))
+    (should (equal '("4" "6" "8") (ess-view-data--completion-get 'col:cyl)))))
+
+(ert-deftest ess-view-data-test-completion-owner ()
+  "The cache lives in the view buffer and is shared with edit buffers."
+  (let (view)
+    (with-temp-buffer
+      (setq-local ess-view-data-temp-object "mtcars")
+      (setq ess-view-data-completion-candidate '((obj:mtcars "mpg" "cyl")))
+      (setq view (current-buffer))
+      (with-temp-buffer
+        ;; an edit buffer without a cache of its own, pointing at VIEW
+        (setq-local ess-view-data--parent-buffer view)
+        (setq-local ess-view-data-temp-object "mtcars")
+        (should (null ess-view-data-completion-candidate))
+        ;; reads resolve through the owner
+        (should (equal '("mpg" "cyl") (ess-view-data--completion-get 'obj:mtcars)))
+        ;; writes from the edit buffer land in the view buffer
+        (ess-view-data--completion-put 'col:hp '("100" "200"))
+        (should (equal '("100" "200")
+                       (alist-get 'col:hp (buffer-local-value
+                                           'ess-view-data-completion-candidate view))))
+        ;; `--ensure-completion-cols' resolves and caches via the owner
+        (should (equal '("mpg" "cyl") (ess-view-data--ensure-completion-cols)))
+        (should (assq 'obj:mtcars (buffer-local-value
+                                   'ess-view-data-completion-candidate view)))))))
+
+(ert-deftest ess-view-data-test-completion-invalidate ()
+  "`--invalidate-completion' drops both cache layers."
+  (with-temp-buffer
+    (setq ess-view-data-completion-candidate '((obj:mtcars "mpg" "cyl")))
+    (setq-local ess-view-data--page-cols '("mpg" "cyl"))
+    (ess-view-data--invalidate-completion (current-buffer))
+    (should (null ess-view-data-completion-candidate))
+    (should (null ess-view-data--page-cols))))
+
+(ert-deftest ess-view-data-test-column-values-cache ()
+  "Column values are cached per column; failed fetches are not cached."
+  (with-temp-buffer
+    (setq-local ess-view-data-temp-object "mtcars")
+    ;; no R process attached: the fetch fails and must not be pinned
+    (should (null (ess-view-data--column-values "mpg")))
+    (should (null ess-view-data-completion-candidate))
+    ;; once populated, later accesses hit the cache
+    (ess-view-data--completion-put 'col:mpg '("21" "22"))
+    (should (equal '("21" "22") (ess-view-data--column-values "mpg")))
+    ;; a different column stays separate until populated
+    (should (null (ess-view-data--column-values "cyl")))
+    (should (equal '("21" "22") (ess-view-data--completion-get 'col:mpg)))))
+
+(ert-deftest ess-view-data-test-do-complete-data-channels ()
+  "do-complete-data builds the alist from column names and per-column values."
+  (with-temp-buffer
+    (setq-local ess-view-data-temp-object "mtcars")
+    (setq-local ess-view-data--page-cols '("mpg" "cyl"))
+    (ess-view-data--completion-put 'col:mpg '("21" "22"))
+    (let ((result (ess-view-data-do-complete-data 'jsonlite)))
+      (should (equal (cons 'mtcars '("mpg" "cyl")) (car result)))
+      (should (equal '("21" "22") (cdr (assq 'mpg result))))
+      ;; "cyl" has no process-backed fetch here, so its slot is empty
+      (should (assq 'cyl result))
+      (should (null (cdr (assq 'cyl result)))))))
+
+(ert-deftest ess-view-data-test-completion-key-normalize ()
+  "`--completion-key' namespaces object/column keys and strips backticks."
+  (should (eq 'obj:mtcars (ess-view-data--completion-key 'object "`mtcars`")))
+  (should (eq 'obj:mtcars (ess-view-data--completion-key 'object "mtcars")))
+  (should (eq (intern "col:my col")
+              (ess-view-data--completion-key 'column "`my col`")))
+  ;; the two namespaces never collide
+  (should-not (eq (ess-view-data--completion-key 'object "mtcars")
+                  (ess-view-data--completion-key 'column "mtcars"))))
+
+(ert-deftest ess-view-data-test-completion-empty-data ()
+  "Empty data: no column names to cache, and fetches are retried."
+  (with-temp-buffer
+    (setq-local ess-view-data-temp-object "`empty`")
+    ;; no page cache and no R process: nil, and nothing is pinned
+    (should (null (ess-view-data--ensure-completion-cols)))
+    (should (null ess-view-data-completion-candidate))
+    ;; a second call retries instead of serving a cached nil
+    (should (null (ess-view-data--ensure-completion-cols)))
+    (should (null ess-view-data-completion-candidate))
+    ;; column values follow the same rule
+    (should (null (ess-view-data--column-values "x")))
+    (should (null ess-view-data-completion-candidate))))
+
+(ert-deftest ess-view-data-test-completion-wide-table ()
+  "Wide tables cache all column names and keep per-column values separate."
+  (with-temp-buffer
+    (setq-local ess-view-data-temp-object "wide")
+    (let ((cols (cl-loop for i from 0 below 200
+                         collect (format "col-%d" i))))
+      (setq-local ess-view-data--page-cols cols)
+      (should (equal cols (ess-view-data--ensure-completion-cols)))
+      ;; names are cached; the page cache is no longer needed
+      (setq-local ess-view-data--page-cols nil)
+      (should (equal cols (ess-view-data--ensure-completion-cols)))
+      ;; per-column values stay independent across the full range
+      (ess-view-data--completion-put
+       (ess-view-data--completion-key 'column "col-0") '("a" "b"))
+      (ess-view-data--completion-put
+       (ess-view-data--completion-key 'column "col-199") '("x" "y" "z"))
+      (should (equal '("a" "b") (ess-view-data--column-values "col-0")))
+      (should (equal '("x" "y" "z") (ess-view-data--column-values "col-199")))
+      ;; untouched columns still miss
+      (should (null (ess-view-data--column-values "col-100"))))))
+
+(ert-deftest ess-view-data-test-completion-name-collision ()
+  "A column named like the object never clobbers the column-name entry."
+  (with-temp-buffer
+    (setq-local ess-view-data-temp-object "mtcars")
+    (setq-local ess-view-data--page-cols '("mtcars" "mpg"))
+    (should (equal '("mtcars" "mpg") (ess-view-data--ensure-completion-cols)))
+    ;; values for the colliding column land in the column namespace
+    (ess-view-data--completion-put
+     (ess-view-data--completion-key 'column "mtcars") '("6" "8"))
+    (should (equal '("mtcars" "mpg") (ess-view-data--ensure-completion-cols)))
+    (should (equal '("6" "8") (ess-view-data--column-values "mtcars")))
+    ;; backtick-quoted variants hit the same normalized keys
+    (should (equal '("mtcars" "mpg")
+                   (ess-view-data--ensure-completion-cols "`mtcars`")))
+    (ess-view-data--completion-put
+     (ess-view-data--completion-key 'column "my col") '("1" "2"))
+    (should (equal '("1" "2") (ess-view-data--column-values "`my col`")))))
 
 (provide 'ess-view-data-test)
 ;;; ess-view-data-test.el ends here

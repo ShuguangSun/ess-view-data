@@ -977,6 +977,7 @@ Optional argument PROC The associated ESS process."
                    nil nil nil nil proc))))
   (cl-pushnew ess-view-data-temp-object ess-view-data-temp-object-list)
   (delete-dups ess-view-data-temp-object-list)
+  (ess-view-data--invalidate-completion (current-buffer))
   (ess-view-data--ensure-protocol proc))
 
 
@@ -1165,6 +1166,7 @@ Optional argument PROC The associated ESS process."
                    nil nil nil nil proc))))
   (cl-pushnew ess-view-data-temp-object ess-view-data-temp-object-list)
   (delete-dups ess-view-data-temp-object-list)
+  (ess-view-data--invalidate-completion (current-buffer))
   (ess-view-data--ensure-protocol proc))
 
 
@@ -1331,6 +1333,7 @@ Optional argument PROC The associated ESS process."
                    nil nil nil nil proc))))
   (cl-pushnew ess-view-data-temp-object ess-view-data-temp-object-list)
   (delete-dups ess-view-data-temp-object-list)
+  (ess-view-data--invalidate-completion (current-buffer))
   (ess-view-data--ensure-protocol proc))
 
 
@@ -1607,6 +1610,9 @@ according to `ess-view-data-display-backend'."
     (ess-write-to-dribble-buffer (format "[ESS-v] %s.\n" (symbol-name fun)))
     (with-current-buffer buf
       (when (memq type '(update reset))
+        ;; The temp object changed, so cached column names and values
+        ;; are stale; drop them (C3).
+        (ess-view-data--invalidate-completion buf)
         (setq ess-view-data-history
               (if (eql type 'reset) (car command)
                 (concat ess-view-data-history (car command))))
@@ -1766,20 +1772,130 @@ Optional argument FILE-NAME file name."
     result))
 
 
+;;; * Completion cache
+
+;; The completion cache (an alist of `(NAME . VALUES)' pairs) is owned
+;; by the view buffer.  Edit-indirect buffers reach it through
+;; `ess-view-data--parent-buffer', so a second completion from either
+;; buffer costs no extra round trip (C3).
+
+(defun ess-view-data--completion-owner ()
+  "Return the buffer owning the completion cache.
+In an edit-indirect buffer this follows `ess-view-data--parent-buffer';
+in the view buffer itself it is the current buffer."
+  (or ess-view-data--parent-buffer (current-buffer)))
+
+(defun ess-view-data--completion-get (key)
+  "Completion VALUES for KEY from the cache, as a list, or nil.
+Vector values written by older code are converted for convenience."
+  (let ((value (alist-get key
+                          (buffer-local-value
+                           'ess-view-data-completion-candidate
+                           (ess-view-data--completion-owner)))))
+    (when value
+      (if (vectorp value) (append value nil) value))))
+
+(defun ess-view-data--completion-put (key value)
+  "Store KEY->VALUE in the completion cache of the owning view buffer."
+  (with-current-buffer (ess-view-data--completion-owner)
+    (setf (alist-get key ess-view-data-completion-candidate) value)))
+
+(defun ess-view-data--invalidate-completion (buf)
+  "Drop the completion and column caches of the view buffer BUF.
+Called after any verb that changes the temp object so stale
+candidates are never offered (C3)."
+  (with-current-buffer buf
+    (setq ess-view-data-completion-candidate nil)
+    (setq ess-view-data--page-cols nil)))
+
+(defun ess-view-data--completion-key (kind name)
+  "Return the cache alist key for NAME, namespace-prefixed by KIND.
+KIND is `object' or `column'.  The distinct \"obj:\"/\"col:\"
+prefixes keep object and column entries from ever colliding in the
+shared alist (e.g. a column literally named like the object).  Backticks
+are stripped, so `` `my col` '' and \"my col\" map to the same key."
+  (intern (concat (if (eql kind 'object) "obj:" "col:")
+                  (replace-regexp-in-string "`" "" name))))
+
+(defun ess-view-data--completion-cols ()
+  "Cached column names of the temp object, as a list."
+  (ess-view-data--completion-get
+   (ess-view-data--completion-key 'object ess-view-data-temp-object)))
+
+(defun ess-view-data--fetch-colnames (&optional obj)
+  "Fetch the column names of OBJ (default the temp object) from R.
+Text backends fall back to a light `names()' query."
+  (let* ((buf (current-buffer))
+         (proc-name (buffer-local-value 'ess-local-process-name buf))
+         (proc (and (stringp proc-name) (get-process proc-name))))
+    (when (and proc-name proc (not (process-get proc 'busy)))
+      (ess-get-words-from-vector
+       (concat "names(" (or obj ess-view-data-temp-object) ")\n")))))
+
+(defun ess-view-data--fetch-column-values (col &optional obj)
+  "Fetch the unique values of COL in OBJ (default the temp object).
+Values are queried per column via jsonlite, so a wide table is never
+dumped at once."
+  (let* ((buf (current-buffer))
+         (proc-name (buffer-local-value 'ess-local-process-name buf))
+         (proc (and (stringp proc-name) (get-process proc-name)))
+         (cmd (format "jsonlite::toJSON(as.character(unique(%s[[%s]])))\n"
+                      (or obj ess-view-data-temp-object)
+                      (ess-view-data--r-quote-string
+                       (replace-regexp-in-string "`" "" col)))))
+    (when (and proc-name proc (not (process-get proc 'busy)))
+      (append (json-read-from-string (ess-string-command cmd)) nil))))
+
+(defun ess-view-data--ensure-completion-cols (&optional df)
+  "Return the column names of DF (default the temp object), cached.
+Table mode reuses the column names of the last page query, so the
+first completion in a view buffer costs no extra round trip; other
+backends fall back to `ess-view-data--fetch-colnames'."
+  (let* ((obj (or df ess-view-data-temp-object))
+         (obj-key (ess-view-data--completion-key 'object obj)))
+    (or (ess-view-data--completion-get obj-key)
+        (let* ((page-cols (and (null df)
+                               (with-current-buffer (ess-view-data--completion-owner)
+                                 ess-view-data--page-cols)))
+               (cols (or page-cols (ess-view-data--fetch-colnames obj))))
+          ;; Do not cache a failed fetch (busy process), so the next
+          ;; call retries instead of pinning an empty candidate list.
+          (when cols
+            (ess-view-data--completion-put obj-key cols))
+          cols))))
+
+(defun ess-view-data--column-values (col &optional df)
+  "Return the unique values of COL in DF (default the temp object).
+The first access for COL fetches from R and caches the result per
+column; later accesses, also from the edit-indirect buffer, hit the
+cache."
+  (let* ((obj (or df ess-view-data-temp-object))
+         (key (ess-view-data--completion-key 'column col)))
+    (or (ess-view-data--completion-get key)
+        (let ((vals (ess-view-data--fetch-column-values col obj)))
+          ;; As in `ess-view-data--ensure-completion-cols', a failed
+          ;; fetch (busy process) is not cached.
+          (when vals
+            (ess-view-data--completion-put key vals))
+          vals))))
+
+
 ;;; * For completion
 (cl-defmethod ess-view-data-do-complete-data ((_backend (eql jsonlite)) &optional dataframe)
-  "To get the list for completing in data frame.
-
-Optional argument DATAFRAME dataframe to do complete which will
-be dumped vis toJSON."
-  (let (cmd result)
-    (setq cmd
-          (concat
-           "jsonlite::toJSON("
-           (format "c(list(%1$s = names(%1$s)), lapply(%1$s, function(x) as.character(unique(x))))"
-                   (or dataframe ess-view-data-temp-object))
-           ")\n"))
-    (setq result (json-read-from-string (ess-string-command cmd)))
+  "Return the completion alist for DATAFRAME (default the temp object).
+Column names come from the column layer
+\(`ess-view-data--ensure-completion-cols'); unique values are fetched
+per column through `ess-view-data--column-values' instead of dumping
+every column in a single jsonlite call."
+  (let* ((obj (or dataframe ess-view-data-temp-object))
+         (obj-key (intern (replace-regexp-in-string "`" "" obj)))
+         (cols (ess-view-data--ensure-completion-cols dataframe))
+         result)
+    (setq result (list (cons obj-key cols)))
+    (dolist (col cols)
+      (setq result (nconc result (list (cons (intern col)
+                                             (ess-view-data--column-values
+                                              col dataframe))))))
     result))
 
 
@@ -1807,16 +1923,6 @@ to be completed."
   (unless (and
            ess-local-process-name)
     (error "Not in an R buffer with attached process"))
-  (let* ((buf (current-buffer))
-         (proc-name (buffer-local-value 'ess-local-process-name buf))
-         (proc (get-process proc-name)))
-
-    (unless ess-view-data-completion-candidate
-      (when (and proc-name proc
-                 (not (process-get proc 'busy)))
-        (setq ess-view-data-completion-candidate
-              (ess-view-data-do-complete-data ess-view-data-current-complete-backend)))))
-
   (let (evd-object)
 
     (if (or arg (null (save-excursion
@@ -1830,15 +1936,7 @@ to be completed."
             (setq evd-object
                   (funcall ess-view-data-read-string
                            "Variable: "
-                           (delq nil (delete-dups (append
-                            (if (assq (intern ess-view-data-temp-object)
-                                      ess-view-data-completion-candidate)
-                                (alist-get (intern ess-view-data-temp-object)
-                                           ess-view-data-completion-candidate)
-                              (alist-get (intern (replace-regexp-in-string
-                                                  "`" "" ess-view-data-temp-object))
-                                         ess-view-data-completion-candidate))
-                            nil)))
+                           (delete-dups (ess-view-data--ensure-completion-cols))
                            nil nil token-string))
             (delete-region start end)
             ;; propertize
@@ -1853,15 +1951,7 @@ to be completed."
             (setq com
                   (funcall ess-view-data-read-string
                            "Value: "
-                           (delq nil (delete-dups (append
-                            (if (assq (intern evd-object)
-                                      ess-view-data-completion-candidate)
-                                (alist-get (intern evd-object)
-                                           ess-view-data-completion-candidate)
-                              (alist-get (intern (replace-regexp-in-string
-                                                  "`" "" evd-object))
-                                         ess-view-data-completion-candidate))
-                            nil)))
+                           (delete-dups (ess-view-data--column-values evd-object))
                            nil nil token-string))
             (delete-region start end)
             (insert com))))))
@@ -1873,28 +1963,10 @@ to be completed."
   (unless (and
            ess-local-process-name)
     (error "Not in an R buffer with attached process"))
-  (let* ((buf (current-buffer))
-         (proc-name (buffer-local-value 'ess-local-process-name buf))
-         (proc (get-process proc-name)))
-
-    (unless ess-view-data-completion-candidate
-      (when (and proc-name proc
-                 (not (process-get proc 'busy)))
-        (setq ess-view-data-completion-candidate
-              (ess-view-data-do-complete-data ess-view-data-current-complete-backend)))))
-
-  (if ess-view-data-completion-candidate
-      (let* ((obj-list (append
-                        (if (assq (intern ess-view-data-temp-object)
-                                  ess-view-data-completion-candidate)
-                            (alist-get (intern ess-view-data-temp-object)
-                                       ess-view-data-completion-candidate)
-                          (alist-get (intern (replace-regexp-in-string
-                                              "`" "" ess-view-data-temp-object))
-                                     ess-view-data-completion-candidate))
-                        nil)))
-        (insert (mapconcat (lambda (x) (propertize x 'evd-object x))
-                           (delete-dups obj-list) ",")))))
+  (let ((cols (delete-dups (ess-view-data--ensure-completion-cols))))
+    (when cols
+      (insert (mapconcat (lambda (x) (propertize x 'evd-object x))
+                         cols ",")))))
 
 
 (defun ess-view-data-insert-all-values ()
@@ -1903,32 +1975,14 @@ to be completed."
   (unless (and
            ess-local-process-name)
     (error "Not in an R buffer with attached process"))
-  (let* ((buf (current-buffer))
-         (proc-name (buffer-local-value 'ess-local-process-name buf))
-         (proc (get-process proc-name)))
-
-    (unless ess-view-data-completion-candidate
-      (when (and proc-name proc
-                 (not (process-get proc 'busy)))
-        (setq ess-view-data-completion-candidate
-              (ess-view-data-do-complete-data ess-view-data-current-complete-backend)))))
-
   (let (evd-object)
     (save-excursion
       (save-restriction
         (setq evd-object (ess-view-data--previous-complete-object 'evd-object))))
 
     (if evd-object
-        (let* ((obj-list (append
-                          (if (assq (intern evd-object)
-                                    ess-view-data-completion-candidate)
-                              (alist-get (intern evd-object)
-                                         ess-view-data-completion-candidate)
-                            (alist-get (intern (replace-regexp-in-string
-                                                "`" "" evd-object))
-                                       ess-view-data-completion-candidate))
-                          nil)))
-          (insert (format "\"%s\""(mapconcat 'identity (delete-dups obj-list) ",")))))))
+        (let ((obj-list (delete-dups (ess-view-data--column-values evd-object))))
+          (insert (format "\"%s\""(mapconcat 'identity obj-list ",")))))))
 
 
 (defun ess-view-data-complete-object ()
@@ -1942,31 +1996,13 @@ to be completed."
   (unless (and
            ess-local-process-name)
     (error "Not in an R buffer with attached process"))
-  (let* ((buf (current-buffer))
-         (proc-name (buffer-local-value 'ess-local-process-name buf))
-         (proc (get-process proc-name)))
-
-    (unless ess-view-data-completion-candidate
-      (when (and proc-name proc
-                 (not (process-get proc 'busy)))
-        (setq ess-view-data-completion-candidate
-              (ess-view-data-do-complete-data ess-view-data-current-complete-backend)))))
-
   (let* ((possible-completions (ess-r-get-rcompletions))
          (token-string (or (car possible-completions) ""))
          object)
     (setq object
           (funcall ess-view-data-read-string
                    "Variable: "
-                   (append
-                    (if (assq (intern ess-view-data-temp-object)
-                              ess-view-data-completion-candidate)
-                        (alist-get (intern ess-view-data-temp-object)
-                                   ess-view-data-completion-candidate)
-                      (alist-get (intern (replace-regexp-in-string
-                                          "`" "" ess-view-data-temp-object))
-                                 ess-view-data-completion-candidate))
-                    nil)
+                   (delete-dups (ess-view-data--ensure-completion-cols))
                    nil nil token-string))
     (insert (propertize " " 'evd-object object))))
 
