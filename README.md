@@ -65,6 +65,26 @@ It will put a head information at above:
 - ido-completing-read
 - ivy-completing-read
 
+### ess-view-data-display-backend
+
+How to display data in the view buffer:
+
+- table (default): a structured `tabulated-list` view with column types,
+  aligned cells, truncated long cells and clickable sort headers
+- print / kable: the historical text output of the print/kable backends,
+  i.e. csv text with the `# Trace` / `# Last` / `# Page number` head lines
+  and a csv-mode column header
+
+To restore the historical csv + header view, set it to `print`, e.g.:
+
+``` elisp
+;; M-x customize-option RET ess-view-data-display-backend RET print
+(setq ess-view-data-display-backend 'print)
+```
+
+**NB**: the setting is global; after switching, refresh the current view
+buffer with `ess-view-data-reset` or re-run `ess-view-data-print`.
+
 ### ess-view-data-tibble-crayon-enabled-p
 
 set `ess-view-data-tibble-crayon-enabled-p` to `t` (default) will enable crayon

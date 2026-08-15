@@ -32,6 +32,20 @@
 ;; ess-view-data-complete-backend-list: jsonlite
 ;; ess-view-data-read-string: ess-completing-read (default), completing-read,
 ;;                            ido-completing-read, ivy-completing-read
+;; ess-view-data-display-backend: how to display data in the view buffer.
+;;   `table' (default): a structured tabulated-list with column types, aligned
+;;   cells, truncated long cells and clickable sort headers.
+;;   `print' / `kable': keep the historical text output of the print/kable
+;;   backends (csv text with the '# Trace' / '# Last' / '# Page number' head
+;;   lines and a csv-mode column header).
+;;   To restore the historical csv + header view, set
+;;   `ess-view-data-display-backend' to `print', e.g.:
+;;
+;;     M-x customize-option RET ess-view-data-display-backend RET print
+;;     (setq ess-view-data-display-backend 'print)
+;;
+;;   NB: the setting is global; refresh the current view buffer
+;;   (ess-view-data-reset or re-run ess-view-data-print) after switching.
 
 ;; Utils:
 ;; NOTE: it will make a copy of the data and then does the following action
