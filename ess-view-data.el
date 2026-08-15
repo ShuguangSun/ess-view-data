@@ -768,7 +768,7 @@ running command."
     (string-match-p
      "TRUE"
      (ess-string-command
-      (format "cat(exists(%s, envir = .GlobalEnv, inherits = FALSE))\n"
+      (format "cat(exists(as.character(quote(%s)), envir = .GlobalEnv, inherits = FALSE), \"\\n\")\n"
               ess-view-data-temp-object)))))
 
 (defun ess-view-data--ensure-protocol (proc)
@@ -2141,6 +2141,8 @@ Optional argument PROMPT prompt for `read-string'."
   (unless (and
            ess-local-process-name)
     (error "Not in an R buffer with attached process"))
+  (unless ess-view-data-object
+    (error "No data object is being viewed; run `ess-view-data-print' first"))
   (let* ((buf (current-buffer))
          (proc-name (buffer-local-value 'ess-local-process-name buf))
          (proc (get-process proc-name))
@@ -2492,6 +2494,14 @@ Optional argument MAXPRINT if non-nil, toggle `ess-view-data-maxprint-p'."
          (proc (get-process proc-name))
          command)
     (with-current-buffer buf
+      ;; Enable the table major mode up front.  `define-derived-mode'
+      ;; runs `kill-all-local-variables' on first activation, which
+      ;; would wipe the buffer-local state set below (object, temp
+      ;; object, page vars) before `ess-view-data--table-print' gets to
+      ;; render.  Turn it on now, while the buffer is still empty, so
+      ;; later renders find `derived-mode-p' true and keep the state.
+      (when (ess-view-data--display-table-p)
+        (ess-view-data-table-mode))
       (if maxprint
           (setq ess-view-data-maxprint-p (not ess-view-data-maxprint-p)))
       (unless ess-view-data-object
