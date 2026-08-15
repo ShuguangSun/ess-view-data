@@ -423,5 +423,159 @@
      (ess-view-data--completion-key 'column "my col") '("1" "2"))
     (should (equal '("1" "2") (ess-view-data--column-values "`my col`")))))
 
+(ert-deftest ess-view-data-test-table-entries-format ()
+  "`--table-entries' yields (ID VECTOR) pairs, not dotted pairs.
+`tabulated-list-print' reads `(cadr entry)' as the column vector, so a
+dotted pair would make it take the first cell instead and signal
+`wrong-type-argument listp' on the vector."
+  (with-temp-buffer
+    (let ((entries (ess-view-data--table-entries
+                    '(("a1" "1" "c1") ("a2" "2" "c2"))
+                    '(10 10 10))))
+      (should (= 2 (length entries)))
+      (dolist (e entries)
+        (should (equal 2 (length e)))
+        (should (listp e))
+        (should (vectorp (nth 1 e)))))))
+
+(ert-deftest ess-view-data-test-table-print-runs ()
+  "`--table-print' renders a protocol page without signaling (regression).
+Covers the full parse -> entries -> `tabulated-list-print' chain that
+previously failed with `wrong-type-argument listp' on dotted pairs."
+  (let* ((proto (concat "EVD_N 2\n"
+                        "EVD_ROWS r1\tr2\n"
+                        "EVD_COLS a\tb\tc\n"
+                        "EVD_TYPES chr\tint\tchr\n"
+                        "a1\t1\tc1\n"
+                        "a2\t2\tc2\n"
+                        ""))
+         (data (ess-view-data--page-data proto)))
+    (should data)
+    (with-temp-buffer
+      (let ((ess-view-data-rows-per-page 200)
+            (ess-view-data-page-number 0)
+            (ess-view-data--sort-state nil))
+        (ess-view-data--table-print data))
+      (should (equal 2 (length tabulated-list-entries)))
+      (dolist (e tabulated-list-entries)
+        (should (vectorp (nth 1 e)))))))
+
+(ert-deftest ess-view-data-test-table-mixed-types ()
+  "A page mixing factor/date/logical/numeric/char renders without error.
+Header labels keep the protocol type suffix and only numeric columns
+are flagged right-aligned."
+  (let* ((proto (concat "EVD_N 3\n"
+                        "EVD_ROWS r1\tr2\tr3\n"
+                        "EVD_COLS fac\tdt\tlgl\tnum\tchr\n"
+                        "EVD_TYPES fct\tdate\tlgl\tdbl\tchr\n"
+                        "high\t2024-01-15\tTRUE\t3.14\thello\n"
+                        "low\t2024-02-20\tFALSE\t2.718\tworld\n"
+                        "medium\t2024-03-25\tTRUE\t1.618\tfoo\n"
+                        ""))
+         (data (ess-view-data--page-data proto)))
+    (should (equal 3 (nth 0 data)))
+    (should (equal '("fac" "dt" "lgl" "num" "chr") (nth 2 data)))
+    (should (equal '("fct" "date" "lgl" "dbl" "chr") (nth 3 data)))
+    (with-temp-buffer
+      (let ((ess-view-data-rows-per-page 200)
+            (ess-view-data-page-number 0)
+            (ess-view-data--sort-state nil))
+        (ess-view-data--table-print data))
+      (should (= 3 (length tabulated-list-entries)))
+      (dolist (e tabulated-list-entries)
+        (should (vectorp (nth 1 e)))
+        (should (= 5 (length (nth 1 e)))))
+      ;; header labels carry the type suffix
+      (should (equal "fac [fct]" (car (aref tabulated-list-format 0))))
+      (should (equal "dt [date]" (car (aref tabulated-list-format 1))))
+      (should (equal "lgl [lgl]" (car (aref tabulated-list-format 2))))
+      (should (equal "num [dbl]" (car (aref tabulated-list-format 3))))
+      (should (equal "chr [chr]" (car (aref tabulated-list-format 4))))
+      ;; only numeric columns are right aligned
+      (should (null (plist-get (nthcdr 3 (aref tabulated-list-format 0)) :right-align)))
+      (should (null (plist-get (nthcdr 3 (aref tabulated-list-format 1)) :right-align)))
+      (should (null (plist-get (nthcdr 3 (aref tabulated-list-format 2)) :right-align)))
+      (should (plist-get (nthcdr 3 (aref tabulated-list-format 3)) :right-align))
+      (should (null (plist-get (nthcdr 3 (aref tabulated-list-format 4)) :right-align))))))
+
+(ert-deftest ess-view-data-test-table-empty-data ()
+  "Empty pages hit the no-data branch with a well-formed single entry."
+  (let* ((proto (concat "EVD_N 0\n"
+                        "EVD_ROWS\n"
+                        "EVD_COLS\n"
+                        "EVD_TYPES\n"
+                        ""))
+         (data (ess-view-data--page-data proto)))
+    (should (equal 0 (nth 0 data)))
+    (should (null (nth 2 data)))
+    (with-temp-buffer
+      (let ((ess-view-data-rows-per-page 200)
+            (ess-view-data-page-number 0)
+            (ess-view-data--sort-state nil))
+        (ess-view-data--table-print data))
+      (should (equal "No data" (car (aref tabulated-list-format 0))))
+      (should (= 1 (length tabulated-list-entries)))
+      (should (listp (car tabulated-list-entries)))
+      (should (vectorp (nth 1 (car tabulated-list-entries)))))))
+
+(ert-deftest ess-view-data-test-table-error-branch ()
+  "The protocol-failure branch renders (ID VECTOR) entries."
+  (with-temp-buffer
+    (ess-view-data--table-error "Error: boom\nsecond line")
+    (should (= 2 (length tabulated-list-entries)))
+    (dolist (e tabulated-list-entries)
+      (should (listp e))
+      (should (vectorp (nth 1 e))))))
+
+(defun ess-view-data-test--mock-proc ()
+  "A live process object with a nil `busy' property, for render tests.
+`ess-view-data--table-render-page' requires a process that is not busy
+before it will query R; this fake lets the Emacs-side render chain run
+in a batch session where `ess-string-command' is stubbed."
+  (make-process :name "ess-view-data-test-proc"
+                :command (if (eq system-type 'windows-nt)
+                             (list "cmd.exe" "/c" "exit")
+                           (list "/bin/sh" "-c" "exit"))))
+
+(ert-deftest ess-view-data-test-integration-empty-df ()
+  "Smoke: a rendered empty data frame lands in the no-data branch.
+Runs the full render chain (protocol output -> parse -> branch) with
+the R round-trip stubbed."
+  (let ((proc (ess-view-data-test--mock-proc)))
+    (unwind-protect
+        (cl-letf (((symbol-function 'get-process) (lambda (_) proc))
+                  ((symbol-function 'ess-string-command)
+                   (lambda (_cmd) "EVD_N 0\nEVD_ROWS\nEVD_COLS\nEVD_TYPES\n"))
+                  ((symbol-function 'ess-view-data--ensure-protocol)
+                   (lambda (_proc) nil)))
+          (with-temp-buffer
+            (setq-local ess-local-process-name "R")
+            (ess-view-data--table-render-page (current-buffer))
+            (should (equal "No data" (car (aref tabulated-list-format 0))))
+            (should (= 1 (length tabulated-list-entries)))
+            (should (listp (car tabulated-list-entries)))
+            (should (vectorp (nth 1 (car tabulated-list-entries))))))
+      (kill-process proc))))
+
+(ert-deftest ess-view-data-test-integration-protocol-error ()
+  "Smoke: a protocol failure text renders the Error branch.
+Runs the full render chain; the R output lacks the EVD_N header, so
+parsing fails and the failure text is displayed."
+  (let ((proc (ess-view-data-test--mock-proc)))
+    (unwind-protect
+        (cl-letf (((symbol-function 'get-process) (lambda (_) proc))
+                  ((symbol-function 'ess-string-command)
+                   (lambda (_cmd) "Error: object 'ae' not found\nExecution halted\n"))
+                  ((symbol-function 'ess-view-data--ensure-protocol)
+                   (lambda (_proc) nil)))
+          (with-temp-buffer
+            (setq-local ess-local-process-name "R")
+            (ess-view-data--table-render-page (current-buffer))
+            (should (equal "Error" (car (aref tabulated-list-format 0))))
+            (should (= 2 (length tabulated-list-entries)))
+            (dolist (e tabulated-list-entries)
+              (should (vectorp (nth 1 e))))))
+      (kill-process proc))))
+
 (provide 'ess-view-data-test)
 ;;; ess-view-data-test.el ends here

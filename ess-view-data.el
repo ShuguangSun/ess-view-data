@@ -701,28 +701,46 @@ Argument PROC-NAME proc name."
 
 (defconst ess-view-data--protocol-r-code
   (concat
-   "ess_view_data_page <- function(expr, start = 1L, end = 200L) {\n"
+   "assign(\"ess_view_data_page\", value = function(expr, start = 1L, end = 200L) {\n"
    "  obj <- eval(substitute(expr), envir = .GlobalEnv)\n"
    "  n <- nrow(obj)\n"
    "  cat(\"EVD_N \", n, \"\\n\", sep = \"\")\n"
-   "  if (n < 1L) { cat(\"EVD_ROWS\\nEVD_COLS\\nEVD_TYPES\\n\"); return(invisible(NULL)) }\n"
-   "  start <- max(1L, as.integer(start)); end <- min(n, as.integer(end))\n"
+   "  if (n < 1L) {\n"
+   "    cat(\"EVD_ROWS\\nEVD_COLS\\nEVD_TYPES\\n\")\n"
+   "    return(invisible(NULL))\n"
+   "  }\n"
+   "  start <- max(1L, as.integer(start))\n"
+   "  end <- min(n, as.integer(end))\n"
    "  x <- as.data.frame(obj[start:end, , drop = FALSE])\n"
    "  cat(\"EVD_ROWS \", paste(rownames(x), collapse = \"\\t\"), \"\\n\", sep = \"\")\n"
    "  cat(\"EVD_COLS \", paste(names(x), collapse = \"\\t\"), \"\\n\", sep = \"\")\n"
    "  cat(\"EVD_TYPES \", paste(vapply(x, function(z) {\n"
-   "    if (is.factor(z)) \"fct\" else if (inherits(z, \"Date\")) \"date\"\n"
-   "    else if (inherits(z, \"POSIXt\")) \"dttm\"\n"
-   "    else if (is.logical(z)) \"lgl\" else if (is.integer(z)) \"int\"\n"
-   "    else if (is.numeric(z)) \"dbl\" else if (is.list(z)) \"lst\" else \"chr\"\n"
+   "    if (is.factor(z)) {\n"
+   "      \"fct\"\n"
+   "    } else if (inherits(z, \"Date\")) {\n"
+   "      \"date\"\n"
+   "    } else if (inherits(z, \"POSIXt\")) {\n"
+   "      \"dttm\"\n"
+   "    } else if (is.logical(z)) {\n"
+   "      \"lgl\"\n"
+   "    } else if (is.integer(z)) {\n"
+   "      \"int\"\n"
+   "    } else if (is.numeric(z)) {\n"
+   "      \"dbl\"\n"
+   "    } else if (is.list(z)) {\n"
+   "      \"lst\"\n"
+   "    } else {\n"
+   "      \"chr\"\n"
+   "    }\n"
    "  }, character(1L)), collapse = \"\\t\"), \"\\n\", sep = \"\")\n"
    "  rows <- apply(x, 1L, function(v) {\n"
    "    v <- as.character(v)\n"
    "    v[is.na(v)] <- \"NA\"\n"
    "    paste(gsub(\"[\\t\\r\\n]\", \" \", v), collapse = \"\\t\")\n"
    "  })\n"
-   "  cat(rows, sep = \"\\n\"); cat(\"\\n\")\n"
-   "}\n")
+   "  cat(rows, sep = \"\\n\")\n"
+   "  cat(\"\\n\")\n"
+   "}, envir = .GlobalEnv)\n")
   "R source of the page-data protocol helper (protocol v1).
 Sourced once per R session by `ess-view-data--ensure-protocol'.
 
@@ -730,14 +748,41 @@ The helper evaluates EXPR (passed unquoted) in .GlobalEnv, where the
 backend init has attached dplyr/magrittr, prints an EVD_N header line
 with the total row count and, when non-empty, EVD_ROWS/EVD_COLS/
 EVD_TYPES lines plus TAB-separated data rows.  Cells have TAB and
-newline replaced by space and missing values shown as NA.")
+newline replaced by space and missing values shown as NA.
+
+The helper is installed with `assign' into .GlobalEnv, not with a
+plain `<-': ESS wraps every `ess-command' in `local()' via
+`ess-r-format-command', and a `<-' assignment inside `local()'
+stays in the throw-away local environment, so the function would
+never be visible to later queries.  Only `assign' with an explicit
+ENVIR survives the wrapper.")
+
+(defun ess-view-data--temp-exists-p (proc)
+  "Return non-nil when the temp object exists in PROC's R session.
+A busy process (or a missing PROC) is reported as having the object,
+so initialization keeps the current state instead of racing with a
+running command."
+  (if (or (null proc) (process-get proc 'busy)
+          (null ess-view-data-temp-object))
+      t
+    (string-match-p
+     "TRUE"
+     (ess-string-command
+      (format "cat(exists(%s, envir = .GlobalEnv, inherits = FALSE))\n"
+              ess-view-data-temp-object)))))
 
 (defun ess-view-data--ensure-protocol (proc)
-  "Source the page-data protocol helper into PROC's R session once."
-  (when (and proc (not (process-get proc 'busy))
-             (not (process-get proc 'evd-protocol-loaded)))
-    (process-put proc 'evd-protocol-loaded t)
-    (ess-command ess-view-data--protocol-r-code nil nil nil nil proc)))
+  "Ensure the page-data protocol helper exists in PROC's R session.
+Sends an idempotent R guard which (re)defines the helper only when it
+is missing, so a restarted R session gets it back while a live one
+pays a cheap `exists' check.  Callers may run this before every page
+query."
+  (when (and proc (not (process-get proc 'busy)))
+    (ess-command
+     (concat "if (!exists(\"ess_view_data_page\", mode = \"function\", envir = .GlobalEnv)) {\n"
+             ess-view-data--protocol-r-code
+             "}\n")
+     nil nil nil nil proc)))
 
 (defun ess-view-data--protocol-cmd ()
   "R expression querying the current page via the protocol."
@@ -957,19 +1002,24 @@ Optional argument PROC The associated ESS process."
   (let ((obj-space-p (string-match-p ess-view-data-objname-regex ess-view-data-object))
         (obj-back-quote-p (string-match-p "`" ess-view-data-object))
         (obj-back-quote (replace-regexp-in-string "`" "" ess-view-data-object)))
-  (unless ess-view-data-history
+  ;; Initializing the temporary object, for stepwise
+  (when (or (null ess-view-data-temp-object)
+            (not (ess-view-data--temp-exists-p proc)))
+    ;; The temp object is missing in R (e.g. the R session was
+    ;; restarted); rebuild it from the source object and reset the
+    ;; verb chain so the history matches what R actually holds.
+    (unless ess-view-data-temp-object
+      (setq ess-view-data-temp-object
+            (format (cond (obj-back-quote-p "`%s`")
+                          (obj-space-p "`%s`")
+                          (t "`%s`"))
+                    (make-temp-name obj-back-quote))))
     (setq ess-view-data-history
           (format (cond (obj-back-quote-p "as_tibble(%s)")
                         (obj-space-p "as_tibble(`%s`)")
                         (t "as_tibble(%s)"))
-                  ess-view-data-object)))
-  ;; Initializing the temporary object, for stepwise
-  (unless ess-view-data-temp-object
-    (setq ess-view-data-temp-object
-          (format (cond (obj-back-quote-p "`%s`")
-                        (obj-space-p "`%s`")
-                        (t "`%s`"))
-                  (make-temp-name obj-back-quote)))
+                  ess-view-data-object))
+    (setq ess-view-data-page-number 0)
     (when (and proc-name proc
                (not (process-get proc 'busy)))
       (ess-command (concat "{suppressPackageStartupMessages(require(dplyr)); "
@@ -1151,19 +1201,24 @@ Optional argument PROC The associated ESS process."
   (let ((obj-space-p (string-match-p ess-view-data-objname-regex ess-view-data-object))
         (obj-back-quote-p (string-match-p "`" ess-view-data-object))
         (obj-back-quote (replace-regexp-in-string "`" "" ess-view-data-object)))
-  (unless ess-view-data-history
+  ;; Initializing the temporary object, for stepwise
+  (when (or (null ess-view-data-temp-object)
+            (not (ess-view-data--temp-exists-p proc)))
+    ;; The temp object is missing in R (e.g. the R session was
+    ;; restarted); rebuild it from the source object and reset the
+    ;; verb chain so the history matches what R actually holds.
+    (unless ess-view-data-temp-object
+      (setq ess-view-data-temp-object
+            (format (cond (obj-back-quote-p "`%s`")
+                          (obj-space-p "`%s`")
+                          (t "`%s`"))
+                    (make-temp-name obj-back-quote))))
     (setq ess-view-data-history
           (format (cond (obj-back-quote-p "as_tibble(%s)")
                         (obj-space-p "as_tibble(`%s`)")
                         (t "as_tibble(%s)"))
-                  ess-view-data-object)))
-  ;; Initializing the temporary object, for stepwise
-  (unless ess-view-data-temp-object
-    (setq ess-view-data-temp-object
-          (format (cond (obj-back-quote-p "`%s`")
-                        (obj-space-p "`%s`")
-                        (t "`%s`"))
-                  (make-temp-name obj-back-quote)))
+                  ess-view-data-object))
+    (setq ess-view-data-page-number 0)
     (ess-view-data-make-safe-dir ess-view-data-cache-directory)
     (when (and proc-name proc
                (not (process-get proc 'busy)))
@@ -1319,19 +1374,24 @@ Optional argument PROC The associated ESS process."
   (let ((obj-space-p (string-match-p ess-view-data-objname-regex ess-view-data-object))
         (obj-back-quote-p (string-match-p "`" ess-view-data-object))
         (obj-back-quote (replace-regexp-in-string "`" "" ess-view-data-object)))
-  (unless ess-view-data-history
+  ;; Initializing the temporary object, for stepwise
+  (when (or (null ess-view-data-temp-object)
+            (not (ess-view-data--temp-exists-p proc)))
+    ;; The temp object is missing in R (e.g. the R session was
+    ;; restarted); rebuild it from the source object and reset the
+    ;; verb chain so the history matches what R actually holds.
+    (unless ess-view-data-temp-object
+      (setq ess-view-data-temp-object
+            (format (cond (obj-back-quote-p "`%s`")
+                          (obj-space-p "`%s`")
+                          (t "`%s`"))
+                    (make-temp-name obj-back-quote))))
     (setq ess-view-data-history
           (format (cond (obj-back-quote-p "as.data.table(%s)")
                         (obj-space-p "as.data.table(`%s`)")
                         (t "as.data.table(%s)"))
-                  ess-view-data-object)))
-  ;; Initializing the temporary object, for stepwise
-  (unless ess-view-data-temp-object
-    (setq ess-view-data-temp-object
-          (format (cond (obj-back-quote-p "`%s`")
-                        (obj-space-p "`%s`")
-                        (t "`%s`"))
-                  (make-temp-name obj-back-quote)))
+                  ess-view-data-object))
+    (setq ess-view-data-page-number 0)
     (when (and proc-name proc
                (not (process-get proc 'busy)))
       (ess-command (concat "{suppressPackageStartupMessages(require(magrittr));"
@@ -1530,10 +1590,12 @@ The raw R column name is stored in the :evd-name plist so that
                                 :right-align (ess-view-data--numeric-p ty)))))
 
 (defun ess-view-data--table-entries (rows widths)
-  "`tabulated-list-entries' for protocol ROWS with per-column WIDTHS."
+  "`tabulated-list-entries' for protocol ROWS with per-column WIDTHS.
+Each entry is (ID VECTOR), a two-element list, not a dotted pair:
+`tabulated-list-print' relies on `(cadr entry)' being the vector."
   (cl-loop for r in rows
            for i from 0
-           collect (cons i
+           collect (list i
                          (apply #'vector
                                 (cl-loop for cell in r
                                          for w in widths
@@ -1565,7 +1627,7 @@ The raw R column name is stored in the :evd-name plist so that
           (setq tabulated-list-format (ess-view-data--table-format cols types widths))
           (setq tabulated-list-entries (ess-view-data--table-entries rows widths)))
       (setq tabulated-list-format (vector (list "No data" 20 t)))
-      (setq tabulated-list-entries (list (cons 0 (vector (format "%d rows" n))))))
+      (setq tabulated-list-entries (list (list 0 (vector (format "%d rows" n))))))
     (setq tabulated-list-sort-key (ess-view-data--table-sort-key tabulated-list-format))
     (tabulated-list-init-header)
     (tabulated-list-print t)
@@ -1579,7 +1641,7 @@ The raw R column name is stored in the :evd-name plist so that
   (setq tabulated-list-entries
         (cl-loop for l in (split-string text "\n" t)
                  for i from 0
-                 collect (cons i (vector l))))
+                 collect (list i (vector l))))
   (tabulated-list-init-header)
   (tabulated-list-print t))
 
@@ -1589,6 +1651,9 @@ The raw R column name is stored in the :evd-name plist so that
          (proc (get-process proc-name))
          text data)
     (when (and proc-name proc (not (process-get proc 'busy)))
+      ;; R may have been restarted since the helper was sourced; the
+      ;; idempotent guard costs one cheap exists check per query.
+      (ess-view-data--ensure-protocol proc)
       (setq text (with-current-buffer buf
                    (ess-string-command (ess-view-data--protocol-cmd))))
       (setq data (ess-view-data--page-data text))
