@@ -6,7 +6,7 @@
 ;; Created: 2019/04/06
 ;; Version: 1.3
 ;; URL: https://github.com/ShuguangSun/ess-view-data
-;; Package-Requires: ((emacs "26.1") (ess "18.10.1") (csv-mode "1.12"))
+;; Package-Requires: ((emacs "26.1") (ess "18.10.1"))
 ;; Keywords: tools
 
 ;; This program is free software; you can redistribute it and/or modify
@@ -85,17 +85,17 @@
 
 ;;; Code:
 
-;; (require 'eieio)
-
 (eval-when-compile (require 'cl-lib))
 (eval-when-compile (require 'cl-generic))
 
+(require 'cl-lib)
 (require 'ess-inf)
 (require 'ess-rdired)
 (require 'ess-r-mode)
 (require 'ess-r-completion)
 (require 'subr-x)
 (require 'json)
+(require 'tabulated-list)
 
 (defgroup ess-view-data ()
   "ess-view-dat"
@@ -177,12 +177,30 @@ If enabled, `ansi-color-for-comint-mode-on' should be turn on."
                  (symbol :tag "Other"))
   :group 'ess-view-data)
 
-(defcustom ess-view-data-current-summarize-print-backend 'kable
+(defcustom ess-view-data-current-summarise-print-backend 'kable
   "The ess-view-data backend in using."
   :type `(choice ,@(mapcar (lambda (x)
 			                 `(const :tag ,(symbol-name x) ,x))
 			               ess-view-data-print-backend-list)
                  (symbol :tag "Other"))
+  :group 'ess-view-data)
+
+
+(defcustom ess-view-data-display-backend 'table
+  "How to display data in the view buffer.
+
+`table' renders a structured tabulated list with column types,
+aligned cells and clickable sort headers.  `print' and `kable'
+keep the historical text output of `ess-view-data-current-update-
+print-backend' / `ess-view-data-current-summarise-print-backend'."
+  :type '(choice (const :tag "table" table)
+                 (const :tag "print" print)
+                 (const :tag "kable" kable))
+  :group 'ess-view-data)
+
+(defcustom ess-view-data-column-width-cap 16
+  "Maximum width of a table column cell before truncation."
+  :type 'integer
   :group 'ess-view-data)
 
 
@@ -291,6 +309,7 @@ If enabled, `ansi-color-for-comint-mode-on' should be turn on."
     (define-key keymap (kbd "C-c C-v") #'ess-view-data-summarise)
     (define-key keymap (kbd "C-c C-r") #'ess-view-data-reset)
     (define-key keymap (kbd "C-c C-w") #'ess-view-data-save)
+    (define-key keymap (kbd "C-c C-h") #'ess-view-data-show-history)
     (define-key keymap (kbd "M-g p") #'ess-view-data-goto-previous-page)
     (define-key keymap (kbd "M-g n") #'ess-view-data-goto-next-page)
     (define-key keymap (kbd "M-g f") #'ess-view-data-goto-first-page)
@@ -325,73 +344,552 @@ Turning on this mode runs the normal hook `ess-view-data-edit-mode-hook'."
 
 ;;; Utils
 
+;;; Page math
+
+(defun ess-view-data--page-total (nrow rows-per-page)
+  "Total page count for an object with NROW rows at ROWS-PER-PAGE rows each.
+Always returns at least 1 so that empty data still shows one (empty) page."
+  (max 1 (ceiling nrow rows-per-page)))
+
+(defun ess-view-data--page-slice (page-number rows-per-page nrow)
+  "R slice string for PAGE-NUMBER (0-based) of an object with NROW rows.
+Return nil when the page is empty (NROW is 0 or PAGE-NUMBER is out of range)."
+  (let ((start (1+ (* page-number rows-per-page)))
+        (end (min (* (1+ page-number) rows-per-page) nrow)))
+    (when (and (> nrow 0) (<= start end))
+      (format "[%d:%d,]" start end))))
+
+(defun ess-view-data--page-slice-expr (page-number rows-per-page obj)
+  "Guarded R slice expression for PAGE-NUMBER (0-based) of OBJ.
+Used by the text render path where NROW is not known in Emacs.
+Evaluates to `integer(0)' when OBJ is empty, otherwise to the page slice."
+  (format "[if (nrow(%1$s) < 1) integer(0) else (%2$d*%3$d + 1):min((%2$d + 1)*%3$d, nrow(%1$s)),]"
+          obj page-number rows-per-page))
+
+(defun ess-view-data--r-quote-string (str)
+  "Return STR as a valid R string literal.
+Backslashes are converted to forward slashes and double quotes are
+escaped, so that Windows paths produce valid R code."
+  (concat "\""
+          (replace-regexp-in-string
+           "\"" "\\\\\""
+           (replace-regexp-in-string "\\\\" "/" str))
+          "\""))
+
+(defun ess-view-data--run-r (cmd &optional buf no-prompt-check wait proc)
+  "Send CMD to the ESS process and return non-nil when it was sent.
+PROC defaults to the process from `ess-local-process-name'.  When the
+process is busy, signal a `user-error' with a clear message instead of
+silently dropping CMD, so that callers can preserve their state."
+  (let ((proc (or proc (get-process ess-local-process-name))))
+    (cond
+     ((null proc)
+      (user-error "No ESS process to run the command"))
+     ((process-get proc 'busy)
+      (user-error "R process %s is busy; wait for it to finish and retry"
+                  (process-name proc)))
+     (t
+      (ess-command cmd buf no-prompt-check wait nil proc)
+      t))))
+
 ;;; Backend Access API
 
-(cl-defgeneric ess-view-data--do-print (backend str)
+(cl-defgeneric ess-view-data--do-print (_backend)
   "Benchmark function to do print.
 
 Argument BACKEND Backend to dispatch, i.e.,
-the `ess-view-data-current-update-print-backend'.
-Argument STR R script to run.")
+the `ess-view-data-current-update-print-backend'.")
 
-(cl-defgeneric ess-view-data--do-update (backend str)
+(cl-defgeneric ess-view-data--do-update (_backend fun action)
   "Do Update.
 
 Argument BACKEND Backend to dispatch, i.e., the `ess-view-data-current-backend'.
-Argument STR R script to run.")
+Argument FUN Action verb, e.g., select, filter, count.
+Argument ACTION Parameter (R script) for FUN.")
 
-(cl-defgeneric ess-view-data--do-summarise (backend str)
+(cl-defgeneric ess-view-data--do-summarise (_backend fun action)
   "Do summarising.
 
 Argument BACKEND Backend to dispatch, i.e., the `ess-view-data-current-backend'.
-Argument STR R script to run.")
+Argument FUN Action verb, e.g., count, unique, skimr.
+Argument ACTION Parameter (R script) for FUN.")
 
-(cl-defgeneric ess-view-data--create-indirect-buffer (backend str)
-  "Create indirect-buffer for editing.
-
-Argument BACKEND Backend to dispatch, i.e., the `ess-view-data-current-backend'.
-Argument STR R script to run.")
-
-(cl-defgeneric ess-view-data--do-reset (backend str)
+(cl-defgeneric ess-view-data--do-reset (_backend action)
   "Reset print buffer.
 
 Argument BACKEND Backend to dispatch, i.e., the `ess-view-data-current-backend'.
-Argument STR R script to run.")
+Argument ACTION R script to reset the view process.")
 
-(cl-defgeneric ess-view-data-do-save (backend str)
+(cl-defgeneric ess-view-data-do-save (_backend file-name)
   "Save.
 
 Argument BACKEND Backend to dispatch, i.e., the `ess-view-data-current-backend'.
-Argument STR R script to run.")
+Argument FILE-NAME File name to save to.")
 
-(cl-defgeneric ess-view-data-do-complete-data (backend str)
+(cl-defgeneric ess-view-data-do-complete-data (_backend &optional dataframe)
   "Completing input.
 
 Argument BACKEND Backend to dispatch, i.e.,
 the `ess-view-data-current-complete-backend'.
-Argument STR R script to run.")
+Optional argument DATAFRAME Data frame to complete.")
 
-(cl-defgeneric ess-view-data-get-total-page (backend str)
+(cl-defgeneric ess-view-data-get-total-page (_backend proc-name proc)
   "Total number of pages.
 
 Argument BACKEND Backend to dispatch, i.e., the `ess-view-data-current-backend'.
-Argument STR R script to run.")
+Argument PROC-NAME The name of associated ESS process,
+usually `ess-local-process-name'.
+Argument PROC The associated ESS process.")
 
-(cl-defgeneric ess-view-data--header-line (backend str)
+(cl-defgeneric ess-view-data--header-line (_backend)
   "Head-line.
 
-Argument BACKEND Backend to dispatch, i.e., the `ess-view-data-current-backend'.
-Argument STR R script to run.")
+Argument BACKEND Backend to dispatch, i.e., the `ess-view-data-current-backend'.")
 
-(cl-defgeneric ess-view-data--initialize-backend (_backend)
-  "Initialization."
+(cl-defgeneric ess-view-data--initialize-backend (_backend _proc-name _proc)
+  "Initialization.
+
+Argument BACKEND Backend to dispatch, i.e., the `ess-view-data-current-backend'.
+Argument PROC-NAME The name of associated ESS process,
+usually `ess-local-process-name'.
+Argument PROC The associated ESS process."
   nil)
 
-(cl-defgeneric ess-view-data-do-kill-buffer-hook (backend str)
+(cl-defgeneric ess-view-data-do-kill-buffer-hook (_backend _proc-name _proc)
   "Functions to run after `kill-buffer' on '*R Data View' buffer.
 
 Argument BACKEND Backend to dispatch, i.e., the `ess-view-data-current-backend'.
-Argument STR R script to run.")
+Argument PROC-NAME The name of associated ESS process,
+usually `ess-local-process-name'.
+Argument PROC The associated ESS process.")
+
+;;; * Shared backend skeleton (Phase 2, dedup)
+
+;;; ** Verb table: data-driven code generation
+
+(defvar ess-view-data--verb-table
+  (let ((dplyr-verbs
+         '((select   . (cols . " %>% dplyr::select(%s)"))
+           (unselect . (cols-neg . " %>% dplyr::select(%s)"))
+           (filter   . (raw . " %>% dplyr::filter(%s)"))
+           (mutate   . (raw . " %>% dplyr::mutate(%s)"))
+           (sort     . (cols . " %>% dplyr::arrange(%s, .by_group = TRUE)"))
+           (group    . (cols . " %>% dplyr::group_by(%s)"))
+           (ungroup  . (cols . " %>% dplyr::ungroup(%s)"))
+           (slice    . (raw . " %>% dplyr::slice(%s)"))
+           (transmute . (raw . " %>% dplyr::transmute(%s)"))
+           (wide2long . (raw . " %>% tidyr::gather(%s)"))
+           (long2wide . (raw . " %>% tidyr::spread(%s)"))
+           (wide2long-pivot_longer . (raw . " %>% tidyr::pivot_longer(%s)"))
+           (long2wide-pivot_wider  . (raw . " %>% tidyr::pivot_wider(%s)"))
+           (count  . (cols . " %>% dplyr::count(%s)"))
+           (unique . (cols . " %>% dplyr::distinct(%s)"))
+           (skimr  . (cols . " %>% skimr::skim(%s)"))
+           (skimr-all . (fixed . " %>% skimr::skim()"))
+           (summarise . (raw . " %>% %s"))
+           (update . (raw . " %>% %s")))))
+    (list (cons 'dplyr dplyr-verbs)
+          (cons 'dplyr+DT dplyr-verbs)
+          (cons 'data.table+magrittr
+                '((select . (cols . " %>% .[, .(%s)]"))
+                  (unselect . (cols-null . " %>% .[,`:=`(%s)]"))
+                  (filter . (raw . " %>% .[%s,]"))
+                  (mutate . (raw . " %>% .[,`:=`(%s)]"))
+                  (sort . (cols . " %>% setorder(., %s)"))
+                  (group . (state . ess-view-data--group))
+                  (ungroup . (error . "No single ungroup step for data.table+magrittr"))
+                  (slice . (builder . ess-view-data--dt-slice))
+                  (transmute . (raw . " %>% .[,`:=`(%s)]"))
+                  (wide2long . (raw . " %>% melt(., %s)"))
+                  (long2wide . (raw . " %>% dcast(., %s)"))
+                  (count . (cols . " %>% .[, .N, by = .(%s)] "))
+                  (unique . (builder . ess-view-data--dt-unique))
+                  (skimr . (cols . " %>% skimr::skim(%s)"))
+                  (skimr-all . (fixed . " %>% skimr::skim()"))
+                  (summarise . (raw . " %>% %s"))
+                  (update . (raw . " %>% %s"))))))
+  "Verb code generation table, indexed by backend then verb.
+
+Each entry maps VERB to (KIND . PAYLOAD):
+- (cols . FMT): ACTION is a list of columns, de-duplicated, reversed and
+  joined with \",\" before formatting into FMT (e.g. dplyr::select).
+- (cols-neg . FMT): like cols, but every column is prefixed with \"-\"
+  (dplyr unselect).
+- (cols-null . FMT): like cols, but every column is suffixed with
+  \" = NULL\" (data.table unselect).
+- (raw . FMT): ACTION is an R expression string inserted verbatim
+  (filter, mutate, slice, wide2long, ...); a list is joined with \",\".
+- (fixed . STR): the snippet is STR regardless of ACTION (skimr-all).
+- (state . VAR): store the joined column list in buffer-local VAR and
+  produce no snippet (data.table group).
+- (builder . FN): FN is called with ACTION and returns the snippet,
+  used when the verb needs surrounding state (data.table slice) or a
+  custom column transform (data.table unique).
+- (error . MSG): signal MSG (data.table ungroup).
+
+Snippets start with \" %>% \" exactly like the pcase branches they
+replace, so generated history strings stay byte-identical.")
+
+(defun ess-view-data--join-cols (cols &optional prefix suffix)
+  "Join COLS with \",\" after de-duplication and reversal.
+
+PREFIX is prepended and SUFFIX appended to each column."
+  (mapconcat (lambda (x) (concat (or prefix "") x (or suffix "")))
+             (delete-dups (nreverse cols)) ","))
+
+(defun ess-view-data--verb-format (fmt &rest args)
+  "Format FMT with ARGS, treating literal percent signs as literals.
+
+Only \"%s\" placeholders are substituted; other \"%\" characters
+(e.g. in \" %>% \") are escaped for `format'."
+  (apply #'format
+         (replace-regexp-in-string "%\\([^s%]\\)" "%%\\1" fmt)
+         args))
+
+(defvar-local ess-view-data--group nil
+  "Group columns of the data.table+magrittr backend, set by `group'.")
+
+(defvar-local ess-view-data--parent-buffer nil
+  "Parent view buffer of the current edit-indirect buffer.")
+(defvar-local ess-view-data--reset-buffer-p nil
+  "Non-nil when the current edit buffer is the reset buffer.")
+(defvar-local ess-view-data--action nil
+  "Action plist of the current edit buffer.")
+
+(defvar-local ess-view-data--render-object nil
+  "R expression rendered for the current page, or nil for the temp object.
+Set by the summarise verbs so that their result is displayed without
+changing the temp object; see `ess-view-data--render'.")
+(defvar-local ess-view-data--last-command nil
+  "History snippet of the last action, for `ess-view-data-show-history'.")
+(defvar-local ess-view-data--sort-state nil
+  "Current server-side sort as (COL-NAME . DESC-P), or nil.")
+(defvar-local ess-view-data--page-cols nil
+  "Column names of the current page (table display protocol cache).")
+
+(defun ess-view-data--display-table-p ()
+  "Non-nil when the table display backend is active."
+  (eq ess-view-data-display-backend 'table))
+
+(defun ess-view-data--render-object-or-temp ()
+  "R expression to render: `ess-view-data--render-object' or the temp object."
+  (or ess-view-data--render-object ess-view-data-temp-object))
+
+(defun ess-view-data--dt-slice (action)
+  "Build the data.table slice snippet for ACTION.
+
+The slice needs the group columns set by the previous `group' verb,
+stored in `ess-view-data--group'."
+  (if ess-view-data--group
+      (ess-view-data--verb-format " %>% .[, .SD[%s], by = .(%s)]"
+                                  action ess-view-data--group)
+    (error "Group is required for data.table+magrittr")))
+
+(defun ess-view-data--dt-unique (action)
+  "Build the data.table unique snippet for ACTION.
+
+Backquoted column names are unwrapped and quoted with double quotes."
+  (ess-view-data--verb-format
+   " %>% unique(., by = c(\"%s\"))"
+   (mapconcat (lambda (x)
+                (replace-regexp-in-string "^`\\(.*\\)`$" "\\1" x))
+              (delete-dups (nreverse action)) "\",\"")))
+
+(defun ess-view-data--verb-code (backend fun action)
+  "Return the R pipeline snippet for FUN of BACKEND applied to ACTION.
+
+Unknown verbs fall back to \" %>% ACTION\", the historical default."
+  (let* ((entry (alist-get fun (alist-get backend ess-view-data--verb-table)))
+         (kind (car entry))
+         (payload (cdr entry)))
+    (pcase kind
+      ('cols (ess-view-data--verb-format payload (ess-view-data--join-cols action)))
+      ('cols-neg (ess-view-data--verb-format payload (ess-view-data--join-cols action "-")))
+      ('cols-null (ess-view-data--verb-format payload (ess-view-data--join-cols action nil " = NULL")))
+      ('raw (ess-view-data--verb-format payload (if (stringp action) action
+                                                  (mapconcat #'identity action ","))))
+      ('fixed payload)
+      ('state (set payload (ess-view-data--join-cols action)) nil)
+      ('builder (funcall payload action))
+      ('error (error "%s" payload))
+      (_ (ess-view-data--verb-format " %>% %s" (if (stringp action) action
+                                                  (mapconcat #'identity action ",")))))))
+
+;;; ** Shared command builders
+
+(defun ess-view-data--render-page ()
+  "Return the R expression rendering the current page of the temp object."
+  (concat
+   "local({"
+   (format (ess-view-data--do-print ess-view-data-current-update-print-backend)
+           (concat ess-view-data-temp-object
+                   (unless ess-view-data-maxprint-p
+                     (ess-view-data--page-slice-expr
+                      ess-view-data-page-number
+                      ess-view-data-rows-per-page
+                      ess-view-data-temp-object)))
+           ess-view-data-temp-object)
+   "})\n"))
+
+(defun ess-view-data--update-cmd (cmdhist)
+  "Build the update command assigning CMDHIST.
+
+In table display mode only the assignment is returned; the page is
+rendered separately by `ess-view-data--render'.  In text mode the
+page-rendering expression is appended as before."
+  (concat ess-view-data-temp-object " <<- " ess-view-data-temp-object cmdhist "; "
+          (unless (ess-view-data--display-table-p)
+            (ess-view-data--render-page))))
+
+(defun ess-view-data--reset-cmd (cmdhist)
+  "Build the reset command assigning CMDHIST.
+
+In table display mode only the assignment is returned; the page is
+rendered separately by `ess-view-data--render'.  In text mode the
+page-rendering expression is appended as before."
+  (concat ess-view-data-temp-object " <<- " cmdhist "; "
+          (unless (ess-view-data--display-table-p)
+            (ess-view-data--render-page))))
+
+(defun ess-view-data--summarise-cmd (cmdhist)
+  "Build the summarise command rendering `temp CMDHIST' without assigning."
+  (concat
+   "local({"
+   (format (ess-view-data--do-print ess-view-data-current-summarise-print-backend)
+           (concat ess-view-data-temp-object cmdhist)
+           ess-view-data-temp-object)
+   "})\n"))
+
+(defun ess-view-data--page-number (page &optional pnumber)
+  "Return the 0-based page number for navigation symbol PAGE.
+
+PAGE is one of `first', `last', `previous', `next', `page' (with
+PNUMBER) or any other symbol, meaning keep the current page."
+  (pcase page
+    ('first 0)
+    ('last (max 0 (1- ess-view-data-total-page)))
+    ('previous (max 0 (1- ess-view-data-page-number)))
+    ('next (min (1+ ess-view-data-page-number) (max 0 (1- ess-view-data-total-page))))
+    ('page (max (min pnumber (max 0 (1- ess-view-data-total-page))) 0))
+    (_ ess-view-data-page-number)))
+
+(defun ess-view-data--get-total-page (rpp proc-name proc)
+  "Update `ess-view-data-total-page' from R, counting RPP rows per page."
+  (when (and proc-name proc
+             (not (process-get proc 'busy)))
+    (setq ess-view-data-total-page
+          (ess-view-data--page-total
+           (string-to-number
+            (car (ess-get-words-from-vector
+                  (format "as.character(nrow(%s))\n" ess-view-data-temp-object))))
+           rpp))))
+
+(defun ess-view-data--rm-temp-object (proc-name proc)
+  "Remove the temp object from R unless PROC is busy."
+  (when (and proc-name proc
+             (not (process-get proc 'busy)))
+    (ess-command (format "rm(%s, envir = globalenv())\n" ess-view-data-temp-object))
+    (ess-write-to-dribble-buffer (format "[ESS-v] rm(%s, envir = globalenv())\n" ess-view-data-temp-object))))
+
+;;; ** Page-data protocol (v1)
+
+(defconst ess-view-data--protocol-r-code
+  (concat
+   "ess_view_data_page <- function(expr, start = 1L, end = 200L) {\n"
+   "  obj <- eval(substitute(expr), envir = .GlobalEnv)\n"
+   "  n <- nrow(obj)\n"
+   "  cat(\"EVD_N \", n, \"\\n\", sep = \"\")\n"
+   "  if (n < 1L) { cat(\"EVD_ROWS\\nEVD_COLS\\nEVD_TYPES\\n\"); return(invisible(NULL)) }\n"
+   "  start <- max(1L, as.integer(start)); end <- min(n, as.integer(end))\n"
+   "  x <- as.data.frame(obj[start:end, , drop = FALSE])\n"
+   "  cat(\"EVD_ROWS \", paste(rownames(x), collapse = \"\\t\"), \"\\n\", sep = \"\")\n"
+   "  cat(\"EVD_COLS \", paste(names(x), collapse = \"\\t\"), \"\\n\", sep = \"\")\n"
+   "  cat(\"EVD_TYPES \", paste(vapply(x, function(z) {\n"
+   "    if (is.factor(z)) \"fct\" else if (inherits(z, \"Date\")) \"date\"\n"
+   "    else if (inherits(z, \"POSIXt\")) \"dttm\"\n"
+   "    else if (is.logical(z)) \"lgl\" else if (is.integer(z)) \"int\"\n"
+   "    else if (is.numeric(z)) \"dbl\" else if (is.list(z)) \"lst\" else \"chr\"\n"
+   "  }, character(1L)), collapse = \"\\t\"), \"\\n\", sep = \"\")\n"
+   "  rows <- apply(x, 1L, function(v) {\n"
+   "    v <- as.character(v)\n"
+   "    v[is.na(v)] <- \"NA\"\n"
+   "    paste(gsub(\"[\\t\\r\\n]\", \" \", v), collapse = \"\\t\")\n"
+   "  })\n"
+   "  cat(rows, sep = \"\\n\"); cat(\"\\n\")\n"
+   "}\n")
+  "R source of the page-data protocol helper (protocol v1).
+Sourced once per R session by `ess-view-data--ensure-protocol'.
+
+The helper evaluates EXPR (passed unquoted) in .GlobalEnv, where the
+backend init has attached dplyr/magrittr, prints an EVD_N header line
+with the total row count and, when non-empty, EVD_ROWS/EVD_COLS/
+EVD_TYPES lines plus TAB-separated data rows.  Cells have TAB and
+newline replaced by space and missing values shown as NA.")
+
+(defun ess-view-data--ensure-protocol (proc)
+  "Source the page-data protocol helper into PROC's R session once."
+  (when (and proc (not (process-get proc 'busy))
+             (not (process-get proc 'evd-protocol-loaded)))
+    (process-put proc 'evd-protocol-loaded t)
+    (ess-command ess-view-data--protocol-r-code nil nil nil nil proc)))
+
+(defun ess-view-data--protocol-cmd ()
+  "R expression querying the current page via the protocol."
+  (format "ess_view_data_page(%s, %dL, %dL)\n"
+          (ess-view-data--render-object-or-temp)
+          (1+ (* ess-view-data-page-number ess-view-data-rows-per-page))
+          (* (1+ ess-view-data-page-number) ess-view-data-rows-per-page)))
+
+;;; ** Edit-indirect buffer templates
+
+(defvar ess-view-data--template-table
+  (let ((dplyr-templates
+         '((header . "# Insert [all] variable name[s] (C-c C-i[a]), [all] Values (C-c C-l[v])\n")
+           (default . "# %> ... \n")
+           (filter . ess-view-data--tmpl-filter)
+           (mutate . ess-view-data--tmpl-mutate)
+           (wide2long . ess-view-data--tmpl-wide2long)
+           (long2wide . ess-view-data--tmpl-long2wide)
+           (wide2long-pivot_longer . ess-view-data--tmpl-pivot-longer)
+           (long2wide-pivot_wider . ess-view-data--tmpl-pivot-wider)
+           (summarise . ess-view-data--tmpl-summarise)
+           (reset . ess-view-data--tmpl-reset))))
+    (list (cons 'dplyr dplyr-templates)
+          (cons 'dplyr+DT dplyr-templates)
+          (cons 'data.table+magrittr
+                '((header . "# Insert variable name[s] (C-c i[I]), Insert Values (C-c l[L])\n")
+                  (default . "# ... \n")
+                  (filter . ess-view-data--tmpl-dt-filter)
+                  (mutate . ess-view-data--tmpl-dt-mutate)
+                  (wide2long . ess-view-data--tmpl-dt-wide2long)
+                  (long2wide . ess-view-data--tmpl-dt-long2wide)
+                  (summarise . ess-view-data--tmpl-dt-summarise)
+                  (reset . ess-view-data--tmpl-reset)))))
+  "Edit-indirect buffer templates, indexed by backend.
+
+Each backend entry holds the header comment lines plus one template
+function per verb.  Verbs without an entry use the default template.")
+
+(defun ess-view-data--tmpl-filter (obj-list)
+  "Insert the dplyr filter edit template for OBJ-LIST."
+  (setq ess-view-data-completion-object (car obj-list))
+  (insert "# dplyr::filter(...)\n")
+  (let ((pts (point)))
+    (insert (mapconcat (lambda (x) (propertize x 'evd-object x))
+                       (delete-dups (nreverse obj-list)) ","))
+    (goto-char pts)))
+
+(defun ess-view-data--tmpl-mutate (obj-list)
+  "Insert the dplyr mutate edit template for OBJ-LIST."
+  (insert "# dplyr::mutate(...)\n")
+  (let ((pts (point)))
+    (insert (mapconcat (lambda (x) (format " = %s" (propertize x 'evd-object x)))
+                       (delete-dups (nreverse obj-list)) ","))
+    (goto-char pts)))
+
+(defun ess-view-data--tmpl-wide2long (obj-list)
+  "Insert the tidyr gather edit template for OBJ-LIST."
+  (insert "# tidyr::gather(cols, ...)\n")
+  (insert (format "key = %s, value = %s" (car obj-list) (nth 1 obj-list))))
+
+(defun ess-view-data--tmpl-long2wide (obj-list)
+  "Insert the tidyr spread edit template for OBJ-LIST."
+  (insert "# tidyr::spread(key to column names)\n")
+  (insert (format "key = %s, value = %s" (car obj-list) (nth 1 obj-list))))
+
+(defun ess-view-data--tmpl-pivot-longer (obj-list)
+  "Insert the tidyr pivot_longer edit template for OBJ-LIST."
+  (insert "# tidyr::pivot_longer(cols, names and values to)\n")
+  (insert (format "c(), names_to = %s, values_to = %s" (car obj-list) (nth 1 obj-list))))
+
+(defun ess-view-data--tmpl-pivot-wider (obj-list)
+  "Insert the tidyr pivot_wider edit template for OBJ-LIST."
+  (insert "# tidyr::pivot_wider(names and values from)\n")
+  (insert (format "names_from = %s, values_from = %s" (car obj-list) (nth 1 obj-list))))
+
+(defun ess-view-data--tmpl-summarise (obj-list)
+  "Insert the dplyr summarise edit template for OBJ-LIST."
+  (insert "# %> ... \n# Not limited to function summarise\n")
+  (insert "summarise(")
+  (insert (mapconcat (lambda (x) (format "%s" (propertize x 'evd-object x)))
+                     (delete-dups (nreverse obj-list)) ","))
+  (insert ", n = n())"))
+
+(defun ess-view-data--tmpl-reset (obj-list)
+  "Insert the reset edit template (OBJ-LIST is the history string)."
+  (insert "# reset\n")
+  (insert obj-list))
+
+(defun ess-view-data--tmpl-dt-filter (obj-list)
+  "Insert the data.table filter edit template for OBJ-LIST."
+  (setq ess-view-data-completion-object (car obj-list))
+  (insert "# DT[...,]\n")
+  (let ((pts (point)))
+    (insert (mapconcat (lambda (x) (propertize x 'evd-object x))
+                       (delete-dups (nreverse obj-list)) "&"))
+    (goto-char pts)))
+
+(defun ess-view-data--tmpl-dt-mutate (obj-list)
+  "Insert the data.table mutate edit template for OBJ-LIST."
+  (insert "# DT[,`:=`(%s)]\n")
+  (let ((pts (point)))
+    (insert (mapconcat (lambda (x) (format " = %s" (propertize x 'evd-object x)))
+                       (delete-dups (nreverse obj-list)) ","))
+    (goto-char pts)))
+
+(defun ess-view-data--tmpl-dt-wide2long (obj-list)
+  "Insert the data.table melt edit template for OBJ-LIST."
+  (insert "# melt(DT, ...)\n")
+  (insert (format "id.vars = c(\"%s\"), measure = col to fill, variable.name = , value.name = c(\"%s\")"
+                  (car obj-list) (nth 1 obj-list))))
+
+(defun ess-view-data--tmpl-dt-long2wide (obj-list)
+  "Insert the data.table dcast edit template for OBJ-LIST."
+  (insert "# dcast(DT, ...)\n")
+  (insert (format "id? ~ %s, value.var = c(\"%s\")" (car obj-list) (nth 1 obj-list))))
+
+(defun ess-view-data--tmpl-dt-summarise (obj-list)
+  "Insert the data.table summarise edit template for OBJ-LIST."
+  (insert "# DT[...] \n# Not limited to function summarise\n")
+  (insert ".[, .( ), by = .(")
+  (insert (mapconcat (lambda (x) (format "%s" (propertize x 'evd-object x)))
+                     (delete-dups (nreverse obj-list)) ","))
+  (insert ")]"))
+
+(defun ess-view-data--create-indirect-buffer
+    (backend type fun obj-list temp-object parent-buf proc-name)
+  "Create an edit-indirect buffer for BACKEND and return it.
+
+TYPE is the action type, e.g., update, reset, summarise.  FUN is the
+action verb.  OBJ-LIST are the selected columns (or the history string
+for reset).  TEMP-OBJECT is the temporary data name, PARENT-BUF the
+view buffer and PROC-NAME the associated ESS process.  The buffer
+content is filled from `ess-view-data--template-table'."
+  (let* ((buf (get-buffer-create (format ess-view-data-source-buffer-name-format temp-object)))
+         (templates (alist-get backend ess-view-data--template-table))
+         (template (alist-get fun templates))
+         (header (or (alist-get 'header templates) ""))
+         (default (alist-get 'default templates)))
+    (with-current-buffer buf
+      (ess-r-mode)
+      (set-buffer-modified-p nil)
+      (setq ess-view-data--parent-buffer parent-buf)
+      (setq ess-view-data--reset-buffer-p t)
+      (setq ess-view-data--action `((:type . ,type) (:function . ,fun)))
+      (insert header)
+      (insert "# Line started with `#' will be omitted\n")
+      (insert "# Don't comment code as all code will be wrapped in one line\n")
+      (if (functionp template)
+          (funcall template obj-list)
+        (insert (or default ""))
+        (let ((pts (point)))
+          (insert (ess-view-data--join-cols obj-list))
+          (goto-char pts)))
+      (setq ess-local-process-name proc-name)
+      (setq ess-view-data-temp-object
+            (buffer-local-value 'ess-view-data-temp-object parent-buf))
+      (ess-view-data-edit-mode))
+    (select-window (display-buffer buf))))
 
 ;;; * print-backend: print
 (defvar ess-view-data--print-format
@@ -478,21 +976,18 @@ Optional argument PROC The associated ESS process."
                            ")}\n")
                    nil nil nil nil proc))))
   (cl-pushnew ess-view-data-temp-object ess-view-data-temp-object-list)
-  (delete-dups ess-view-data-temp-object-list))
+  (delete-dups ess-view-data-temp-object-list)
+  (ess-view-data--ensure-protocol proc))
 
 
-;; (defvar csv--header-line)
 (defvar-local csv--header-line nil)
 (declare-function csv-header-line "csv-mode")
 
 (cl-defmethod ess-view-data--header-line ((_backend (eql dplyr)))
   "Make header-line for dplyr."
   (goto-char (point-min))
-  ;; (if (looking-at "# A tibble:")
-  ;;     (delete-region (point-min) (1+ (line-end-position))))
   (let ((lin 1))
-    (while ;; (looking-at-p "^\\(+\\|#\\)")
-        (search-forward-regexp "^\\([+]\\|#\\|[[].+?#\\)" nil t)
+    (while (search-forward-regexp "^\\([+]\\|#\\|[[].+?#\\)" nil t)
       (forward-line)
       (setq lin (1+ lin)))
     (unless (fboundp 'csv-header-line) (require 'csv-mode nil t))
@@ -510,14 +1005,7 @@ per page for dplyr+print/kable.
 Optional argument PROC-NAME The name of associated ESS process,
 usually `ess-local-process-name'.
 Optional argument PROC The associated ESS process."
-    (when (and proc-name proc
-               (not (process-get proc 'busy)))
-      (setq ess-view-data-total-page
-            (string-to-number
-             (car (ess-get-words-from-vector
-                   (format "as.character(nrow(%s))\n" ess-view-data-temp-object)))))
-      (setq ess-view-data-total-page
-            (1+ (floor (/ ess-view-data-total-page ess-view-data-rows-per-page))))))
+  (ess-view-data--get-total-page ess-view-data-rows-per-page proc-name proc))
 
 
 
@@ -529,10 +1017,7 @@ The default is to rm the temporary object.
 Optional argument PROC-NAME The name of associated ESS process,
 usually `ess-local-process-name'.
 Optional argument PROC The associated ESS process."
-    (when (and proc-name proc
-               (not (process-get proc 'busy)))
-      (ess-command (format "rm(%s, envir = globalenv())\n" ess-view-data-temp-object))
-      (ess-write-to-dribble-buffer (format "[ESS-v] rm(%s, envir = globalenv())\n" ess-view-data-temp-object))))
+  (ess-view-data--rm-temp-object proc-name proc))
 
 
 ;;; ** Utilities
@@ -543,56 +1028,10 @@ Optional argument FUN What to do with the data, e.g.,
 verb like select, filter, and etc..
 Optional argument ACTION Parameter (R script) for FUN, e.g., columns for select."
   (let (cmdhist cmd result)
-    (setq cmdhist
-          (pcase fun
-            ('select
-             (format " %%>%% dplyr::select(%s)"
-                     (mapconcat 'identity (delete-dups (nreverse action)) ",")))
-            ('filter
-             (format " %%>%% dplyr::filter(%s)" action))
-            ('mutate
-             (format " %%>%% dplyr::mutate(%s)" action))
-            ('sort
-             (format " %%>%% dplyr::arrange(%s, .by_group = TRUE)"
-                     (mapconcat 'identity (delete-dups (nreverse action)) ",")))
-            ('group
-             (format " %%>%% dplyr::group_by(%s)"
-                     (mapconcat 'identity (delete-dups (nreverse action)) ",")))
-            ('ungroup
-             (format " %%>%% dplyr::ungroup(%s)"
-                     (mapconcat 'identity (delete-dups (nreverse action)) ",")))
-            ('transmute
-             (format " %%>%% dplyr::transmute(%s)" action))
-            ('wide2long
-             (format " %%>%% tidyr::gather(%s)" action))
-            ('long2wide
-             (format " %%>%% tidyr::spread(%s)" action))
-            ('wide2long-pivot_longer
-             (format " %%>%% tidyr::pivot_longer(%s)" action))
-            ('long2wide-pivot_wider
-             (format " %%>%% tidyr::pivot_wider(%s)" action))
-            ('slice
-             (format " %%>%% dplyr::slice(%s)" action))
-            ('unselect
-             (format " %%>%% dplyr::select(%s)"
-                     (mapconcat (lambda (x) (concat "-" x))
-                                (delete-dups (nreverse action)) ",")))
-            (_
-             (format " %%>%% %s" action))))
-
+    (setq cmdhist (ess-view-data--verb-code 'dplyr fun action))
     (setq ess-view-data-page-number 0)
-    (setq cmd (concat
-               ess-view-data-temp-object " <<- " ess-view-data-temp-object cmdhist "; "
-               "local({"
-               (format (ess-view-data--do-print ess-view-data-current-update-print-backend)
-                       (concat ess-view-data-temp-object
-                               (unless ess-view-data-maxprint-p
-                                 (format "[(%1$d*%2$d + 1) : min((%1$d + 1)*%2$d, nrow(%s)),]"
-                                         ess-view-data-page-number
-                                         ess-view-data-rows-per-page
-                                         ess-view-data-temp-object)))
-                       ess-view-data-temp-object)
-               "})\n"))
+    (setq ess-view-data--render-object nil)
+    (setq cmd (ess-view-data--update-cmd cmdhist))
     (setq result (cons cmdhist cmd))
     result))
 
@@ -604,32 +1043,11 @@ Optional argument FUN What to do with the data, e.g.,
 verb like count, unique, and etc..
 Optional argument ACTION Parameter (R script) for FUN, e.g., columns for count."
   (let (cmdhist cmd result)
-    (setq cmdhist
-          (pcase fun
-            ('count
-             (format " %%>%% dplyr::count(%s)"
-                     (mapconcat 'identity (delete-dups (nreverse action)) ",")))
-            ('unique
-             (format " %%>%% dplyr::distinct(%s)"
-                     (mapconcat 'identity (delete-dups (nreverse action)) ",")))
-            ('slice
-             (format " %%>%% dplyr::slice(%s)" action))
-            ('skimr
-             (format " %%>%% skimr::skim(%s)"
-                     (mapconcat 'identity (delete-dups (nreverse action)) ",")))
-            ('skimr-all
-             " %>% skimr::skim()")
-            ;; ('summarise
-            ;;  (format " %%>%% dplyr::summarise(%s)" action))
-            (_
-             (format " %%>%% %s" action))))
-
-    (setq cmd (concat
-               "local({"
-               (format (ess-view-data--do-print ess-view-data-current-summarize-print-backend)
-                       (concat ess-view-data-temp-object cmdhist)
-                       ess-view-data-temp-object)
-               "})\n"))
+    (setq cmdhist (ess-view-data--verb-code 'dplyr fun action))
+    (setq ess-view-data--render-object
+          (concat ess-view-data-temp-object cmdhist))
+    (setq cmd (unless (ess-view-data--display-table-p)
+                (ess-view-data--summarise-cmd cmdhist)))
     (setq result (cons cmdhist cmd))
     result))
 
@@ -641,18 +1059,8 @@ which will become the cmd history."
   (let (cmdhist cmd result)
     (setq cmdhist action)
     (setq ess-view-data-page-number 0)
-    (setq cmd (concat
-               ess-view-data-temp-object " <<- " cmdhist "; "
-               "local({"
-               (format (ess-view-data--do-print ess-view-data-current-update-print-backend)
-                       (concat ess-view-data-temp-object
-                               (unless ess-view-data-maxprint-p
-                                 (format "[(%1$d*%2$d + 1) : min((%1$d + 1)*%2$d, nrow(%s)),]"
-                                         ess-view-data-page-number
-                                         ess-view-data-rows-per-page
-                                         ess-view-data-temp-object)))
-                       ess-view-data-temp-object)
-               "})\n"))
+    (setq ess-view-data--render-object nil)
+    (setq cmd (ess-view-data--reset-cmd cmdhist))
     (setq result (cons cmdhist cmd))
     result))
 
@@ -661,110 +1069,14 @@ which will become the cmd history."
 
 Optional argument PNUMBER The page number to go to."
   (let (cmd result)
-    (setq ess-view-data-page-number
-          (pcase page
-            ('first 0)
-            ('last ess-view-data-total-page)
-            ('previous (max 0 (1- ess-view-data-page-number)))
-            ('next (min (1+ ess-view-data-page-number) ess-view-data-total-page))
-            ('page (max (min pnumber ess-view-data-total-page) 0))
-            (_ ess-view-data-page-number)))
-
-    (setq cmd (concat
-               "local({"
-               (format (ess-view-data--do-print ess-view-data-current-update-print-backend)
-                       (concat ess-view-data-temp-object
-                               (unless ess-view-data-maxprint-p
-                                 (format "[(%1$d*%2$d + 1) : min((%1$d + 1)*%2$d, nrow(%s)),]"
-                                         ess-view-data-page-number
-                                         ess-view-data-rows-per-page
-                                         ess-view-data-temp-object)))
-                       ess-view-data-temp-object)
-               "})\n"))
+    (setq ess-view-data-page-number (ess-view-data--page-number page pnumber))
+    (setq ess-view-data--render-object nil)
+    (setq cmd (unless (ess-view-data--display-table-p)
+                (ess-view-data--render-page)))
     (setq result (cons nil cmd))
     result))
 
-(defvar-local ess-view-data--parent-buffer nil)
-(defvar-local ess-view-data--reset-buffer-p nil)
-(defvar-local ess-view-data--action nil)
 (defvar-local ess-local-process-name nil)
-
-(cl-defmethod ess-view-data--create-indirect-buffer
-  ((_backend (eql dplyr))
-   type fun obj-list temp-object parent-buf proc-name)
-  "Create an edit-indirect buffer and return it.
-
-Optional argument TYPE Action type, e.g., update, reset, summarise.
-Optional argument FUN Action function to do with data, e.g.,
-select, count, and etc..
-Optional argument OBJ-LIST Columns/variables to do with.
-Optional argument TEMP-OBJECT Temporary data in the view process.
-Optional argument PARENT-BUF The associated parent buffer for the view process.
-Optional argument PROC-NAME The name of associated ESS process,
-usually `ess-local-process-name'."
-  (let ((buf (get-buffer-create (format ess-view-data-source-buffer-name-format temp-object)))
-        pts)
-    (with-current-buffer buf
-      (ess-r-mode)
-      (set-buffer-modified-p nil)
-      (setq ess-view-data--parent-buffer parent-buf)
-      (setq ess-view-data--reset-buffer-p t)
-      (setq ess-view-data--action `((:type . ,type) (:function . ,fun)))
-      ;; (print (alist-get :function ess-view-data--action))
-      ;; (print (alist-get ':type ess-view-data--action))
-      (insert "# Insert [all] variable name[s] (C-c C-i[a]), [all] Values (C-c C-l[v])\n")
-      (insert "# Line started with `#' will be omitted\n")
-      (insert "# Don't comment code as all code will be wrapped in one line\n")
-      (pcase fun
-        ('filter
-         (setq ess-view-data-completion-object (car obj-list))
-         (insert "# dplyr::filter(...)\n")
-         (setq pts (point))
-         (insert (mapconcat (lambda (x) (propertize x 'evd-object x))
-                            (delete-dups (nreverse obj-list)) ","))
-         (goto-char pts))
-        ('mutate
-         (insert "# dplyr::mutate(...)\n")
-         (setq pts (point))
-         (insert (mapconcat (lambda (x) (format " = %s" (propertize x 'evd-object x)))
-                            (delete-dups (nreverse obj-list)) ","))
-         (goto-char pts))
-        ('wide2long
-         (insert "# tidyr::gather(cols, ...)\n")
-         (insert (format "key = %s, value = %s" (car obj-list) (nth 1 obj-list))))
-        ('long2wide
-         (insert "# tidyr::spread(key to column names)\n")
-         (insert (format "key = %s, value = %s" (car obj-list) (nth 1 obj-list))))
-        ('wide2long-pivot_longer
-         (insert "# tidyr::pivot_longer(cols, names and values to)\n")
-         (insert (format "c(), names_to = %s, values_to = %s" (car obj-list) (nth 1 obj-list))))
-        ('long2wide-pivot_wider
-         (insert "# tidyr::pivot_wider(names and values from)\n")
-         (insert (format "names_from = %s, values_from = %s" (car obj-list) (nth 1 obj-list))))
-        ;; ('summarise
-        ;;  (insert "# %> ... \n# Not limited to function summarise\n")
-        ;;  (insert (mapconcat (lambda (x) (format "%s" (propertize x 'evd-object x)))
-        ;;                     (delete-dups (nreverse obj-list)) ","))
-        ('summarise
-         (insert "# %> ... \n# Not limited to function summarise\n")
-         ;; (insert (format "summarise(mean = mean(%s, na.rm = TRUE), n = n())" obj-list))
-         (insert "summarise(")
-         (insert (mapconcat (lambda (x) (format "%s" (propertize x 'evd-object x)))
-                            (delete-dups (nreverse obj-list)) ","))
-         (insert ", n = n())"))
-        ('reset
-         (insert "# reset\n")
-         (insert obj-list))
-        (_
-         (insert "# %> ... \n")
-         (setq pts (point))
-         (insert (mapconcat 'identity (delete-dups (nreverse obj-list)) ","))
-         (goto-char pts)))
-      (setq ess-local-process-name proc-name)
-      (setq ess-view-data-temp-object
-            (buffer-local-value 'ess-view-data-temp-object parent-buf))
-      (ess-view-data-edit-mode))
-    (select-window (display-buffer buf))))
 
 
 ;;; * backend: dplyr+DT
@@ -852,7 +1164,8 @@ Optional argument PROC The associated ESS process."
                            ")}\n")
                    nil nil nil nil proc))))
   (cl-pushnew ess-view-data-temp-object ess-view-data-temp-object-list)
-  (delete-dups ess-view-data-temp-object-list))
+  (delete-dups ess-view-data-temp-object-list)
+  (ess-view-data--ensure-protocol proc))
 
 
 (cl-defmethod ess-view-data--header-line ((_backend (eql dplyr+DT)))
@@ -873,14 +1186,7 @@ for DT.
 Optional argument PROC-NAME The name of associated ESS process,
 usually `ess-local-process-name'.
 Optional argument PROC The associated ESS process."
-  (when (and proc-name proc
-             (not (process-get proc 'busy)))
-    (setq ess-view-data-total-page
-          (string-to-number
-           (car (ess-get-words-from-vector
-                 (format "as.character(nrow(%s))\n" ess-view-data-temp-object)))))
-    (setq ess-view-data-total-page
-          (1+ (floor (/ ess-view-data-total-page ess-view-data-rows-per-page))))))
+  (ess-view-data--get-total-page ess-view-data-DT-rows-per-page proc-name proc))
 
 (cl-defmethod ess-view-data-do-kill-buffer-hook ((_backend (eql dplyr+DT)) proc-name proc)
   "Functions to run after `kill-buffer' on '*R Data View' buffer.
@@ -890,68 +1196,60 @@ The default is to rm the temporary object.
 Optional argument PROC-NAME The name of associated ESS process,
 usually `ess-local-process-name'.
 Optional argument PROC The associated ESS process."
-    (when (and proc-name proc
-               (not (process-get proc 'busy)))
-      (ess-command (format "rm(%s, envir = globalenv())\n" ess-view-data-temp-object))
-      (ess-write-to-dribble-buffer (format "[ESS-v] rm(%s, envir = globalenv())\n" ess-view-data-temp-object))))
+  (ess-view-data--rm-temp-object proc-name proc))
 
 ;;; ** Utilities
+(defun ess-view-data--dt-options ()
+  "Return the DT table options string honouring `ess-view-data-maxprint-p'."
+  (if ess-view-data-maxprint-p
+      (format ", options = list(autoWidth = FALSE,pageLength = %d)"
+              ess-view-data-DT-rows-per-page)
+    (format ", options = list(lengthMenu = c(10,50,100,%d))"
+            ess-view-data-DT-rows-per-page)))
+
+(defun ess-view-data--render-page-dt ()
+  "Return the R expression rendering the temp object as an HTML DT table."
+  (concat
+   "local({"
+   (format "DT::saveWidget(datatable(%1$s, filter = 'top' %2$s), file = %3$s)\n"
+           ess-view-data-temp-object
+           (ess-view-data--dt-options)
+           (ess-view-data--r-quote-string
+            (format "%s/%s.html"
+                    ess-view-data-cache-directory
+                    (replace-regexp-in-string "`" "" ess-view-data-temp-object))))
+   "})\n"))
+
+(defun ess-view-data--update-cmd-dt (cmdhist)
+  "Build the DT update command assigning CMDHIST.
+
+In table display mode only the assignment is returned; the page is
+rendered separately by `ess-view-data--render'.  In text mode the
+DT HTML rendering expression is appended as before."
+  (concat ess-view-data-temp-object " <<- " ess-view-data-temp-object cmdhist "; "
+          (unless (ess-view-data--display-table-p)
+            (ess-view-data--render-page-dt))))
+
+(defun ess-view-data--reset-cmd-dt (cmdhist)
+  "Build the DT reset command assigning CMDHIST.
+
+In table display mode only the assignment is returned; the page is
+rendered separately by `ess-view-data--render'.  In text mode the
+DT HTML rendering expression is appended as before."
+  (concat ess-view-data-temp-object " <<- " cmdhist "; "
+          (unless (ess-view-data--display-table-p)
+            (ess-view-data--render-page-dt))))
+
 (cl-defmethod ess-view-data--do-update ((_backend (eql dplyr+DT)) fun action)
   "Update the data frame by dplyr stepwisely.
 
 Optional argument FUN what to do, e.g. select, filter, etc..
 Optional argument ACTION parameters to the FUN."
   (let (cmdhist cmd result)
-    (setq cmdhist
-          (pcase fun
-            ('select
-             (format " %%>%% dplyr::select(%s)"
-                     (mapconcat 'identity (delete-dups (nreverse action)) ",")))
-            ('filter
-             (format " %%>%% dplyr::filter(%s)" action))
-            ('mutate
-             (format " %%>%% dplyr::mutate(%s)" action))
-            ('sort
-             (format " %%>%% dplyr::arrange(%s, .by_group = TRUE)"
-                     (mapconcat 'identity (delete-dups (nreverse action)) ",")))
-            ('group
-             (format " %%>%% dplyr::group_by(%s)"
-                     (mapconcat 'identity (delete-dups (nreverse action)) ",")))
-            ('ungroup
-             (format " %%>%% dplyr::ungroup(%s)"
-                     (mapconcat 'identity (delete-dups (nreverse action)) ",")))
-            ('transmute
-             (format " %%>%% dplyr::transmute(%s)" action))
-            ('wide2long
-             (format " %%>%% tidyr::gather(%s)" action))
-            ('long2wide
-             (format " %%>%% tidyr::spread(%s)" action))
-            ('wide2long-pivot_longer
-             (format " %%>%% tidyr::pivot_longer(%s)" action))
-            ('long2wide-pivot_wider
-             (format " %%>%% tidyr::pivot_wider(%s)" action))
-            ('slice
-             (format " %%>%% dplyr::slice(%s)" action))
-            ('unselect
-             (format " %%>%% dplyr::select(%s)"
-                     (mapconcat (lambda (x) (concat "-" x))
-                                (delete-dups (nreverse action)) ",")))
-            (_
-             (format " %%>%% %s" action))))
-
+    (setq cmdhist (ess-view-data--verb-code 'dplyr+DT fun action))
     (setq ess-view-data-page-number 0)
-    (setq cmd (concat
-               ess-view-data-temp-object " <<- " ess-view-data-temp-object cmdhist "; "
-               "local({"
-               (format "DT::saveWidget(datatable(%1$s, filter = 'top' %2$s), file = '%3$s/%4$s.html')\n"
-                       ess-view-data-temp-object
-                       (if ess-view-data-maxprint-p
-                           (format ", options = list(autoWidth = FALSE,pageLength = %d)"
-                                   ess-view-data-DT-rows-per-page)
-                         (format ", options = list(lengthMenu = c(10,50,100,%d))" ess-view-data-DT-rows-per-page))
-                       ess-view-data-cache-directory
-                       (replace-regexp-in-string "`" "" ess-view-data-temp-object))
-               "})\n"))
+    (setq ess-view-data--render-object nil)
+    (setq cmd (ess-view-data--update-cmd-dt cmdhist))
     (setq result (cons cmdhist cmd))
     result))
 
@@ -962,30 +1260,11 @@ Optional argument ACTION parameters to the FUN."
 Optional argument FUN what to do, e.g., count, unique, etc..
 Optional argument ACTION parameters to the FUN."
   (let (cmdhist cmd result)
-    (setq cmdhist
-          (pcase fun
-            ('count
-             (format " %%>%% dplyr::count(%s)" (mapconcat 'identity (delete-dups (nreverse action)) ",")))
-            ('unique
-             (format " %%>%% dplyr::distinct(%s)" (mapconcat 'identity (delete-dups (nreverse action)) ",")))
-            ('slice
-             (format " %%>%% dplyr::slice(%s)" action))
-            ('skimr
-             (format " %%>%% skimr::skim(%s)"
-                     (mapconcat 'identity (delete-dups (nreverse action)) ",")))
-            ('skimr-all
-             " %>% skimr::skim()")
-            ;; ('summarise
-            ;;  (format " %%>%% dplyr::summarise(%s)" action))
-            (_
-             (format " %%>%% %s" action))))
-
-    (setq cmd (concat
-               "local({"
-               (format (ess-view-data--do-print ess-view-data-current-summarize-print-backend)
-                       (concat ess-view-data-temp-object cmdhist)
-                       ess-view-data-temp-object)
-               "})\n"))
+    (setq cmdhist (ess-view-data--verb-code 'dplyr+DT fun action))
+    (setq ess-view-data--render-object
+          (concat ess-view-data-temp-object cmdhist))
+    (setq cmd (unless (ess-view-data--display-table-p)
+                (ess-view-data--summarise-cmd cmdhist)))
     (setq result (cons cmdhist cmd))
     result))
 
@@ -997,111 +1276,20 @@ which will become the cmd history."
   (let (cmdhist cmd result)
     (setq cmdhist action)
     (setq ess-view-data-page-number 0)
-    (setq cmd (concat
-               ess-view-data-temp-object " <<- " cmdhist "; "
-               "local({"
-               (format "DT::saveWidget(datatable(%1$s, filter = 'top' %2$s), file = '%3$s/%4$s.html')\n"
-                       ess-view-data-temp-object
-                       (if ess-view-data-maxprint-p
-                           (format ", options = list(autoWidth = FALSE,pageLength = %d)"
-                                   ess-view-data-DT-rows-per-page)
-                         (format ", options = list(lengthMenu = c(10,50,100,%d))"
-                                 ess-view-data-DT-rows-per-page))
-                       ess-view-data-cache-directory
-                       (replace-regexp-in-string "`" "" ess-view-data-temp-object))
-               "})\n"))
+    (setq ess-view-data--render-object nil)
+    (setq cmd (ess-view-data--reset-cmd-dt cmdhist))
     (setq result (cons cmdhist cmd))
     result))
-
-(cl-defmethod ess-view-data--create-indirect-buffer
-  ((_backend (eql dplyr+DT))
-   type fun obj-list temp-object parent-buf proc-name)
-  "Create an edit-indirect buffer and return it.
-
-Optional argument TYPE Action type, e.g., update, reset, summarise.
-Optional argument FUN Action function to do with data, e.g.,
-select, count, and etc..
-Optional argument OBJ-LIST Columns/variables to do with.
-Optional argument TEMP-OBJECT Temporary data in the view process.
-Optional argument PARENT-BUF The associated parent buffer for the view process.
-Optional argument PROC-NAME The name of associated ESS process,
-usually `ess-local-process-name'."
-  (let ((buf (get-buffer-create (format ess-view-data-source-buffer-name-format temp-object)))
-        pts)
-    (with-current-buffer buf
-      (ess-r-mode)
-      (set-buffer-modified-p nil)
-      (setq ess-view-data--parent-buffer parent-buf)
-      (setq ess-view-data--reset-buffer-p t)
-      (setq ess-view-data--action `((:type . ,type) (:function . ,fun)))
-      ;; (print (alist-get :function ess-view-data--action))
-      ;; (print (alist-get ':type ess-view-data--action))
-      (insert "# Insert variable name[s] (C-c i[I]), Insert Values (C-c l[L])\n")
-      (insert "# Line started with `#' will be omitted\n")
-      (insert "# Don't comment code as all code will be wrapped in one line\n")
-      (pcase fun
-        ('filter
-         (setq ess-view-data-completion-object (car obj-list))
-         (insert "# dplyr::filter(...)\n")
-         (setq pts (point))
-         (insert (mapconcat (lambda (x) (propertize x 'evd-object x))
-                            (delete-dups (nreverse obj-list)) ","))
-         (goto-char pts))
-        ('mutate
-         (insert "# dplyr::mutate(...)\n")
-         (setq pts (point))
-         (insert (mapconcat (lambda (x) (format " = %s" (propertize x 'evd-object x)))
-                            (delete-dups (nreverse obj-list)) ","))
-         (goto-char pts))
-        ('wide2long-gather
-         (insert "# tidyr::gather(cols, ...)\n")
-         (insert (format "key = %s, value = %s" (car obj-list) (nth 1 obj-list))))
-        ('long2wide-spread
-         (insert "# tidyr::spread(key to column names)\n")
-         (insert (format "key = %s, value = %s" (car obj-list) (nth 1 obj-list))))
-        ('wide2long-pivot_longer
-         (insert "# tidyr::pivot_longer(cols, names and values to)\n")
-         (insert (format "c(), names_to = %s, values_to = %s" (car obj-list) (nth 1 obj-list))))
-        ('long2wide-pivot_wider
-         (insert "# tidyr::pivot_wider(names and values from)\n")
-         (insert (format "names_from = %s, values_from = %s" (car obj-list) (nth 1 obj-list))))
-        ('summarise
-         (insert "# %> ... \n# Not limited to function summarise\n")
-         ;; (insert (format "summarise(mean = mean(%s, na.rm = TRUE), n = n())" obj-list))
-         (insert "summarise(")
-         (insert (mapconcat (lambda (x) (format "%s" (propertize x 'evd-object x)))
-                            (delete-dups (nreverse obj-list)) ","))
-         (insert ", n = n())"))
-        ('reset
-         (insert "# reset\n")
-         (insert obj-list))
-        (_
-         (insert "# %> ... \n")
-         (setq pts (point))
-         (insert (mapconcat 'identity (delete-dups (nreverse obj-list)) ","))
-         (goto-char pts)))
-      (setq ess-local-process-name proc-name)
-      (setq ess-view-data-temp-object
-            (buffer-local-value 'ess-view-data-temp-object parent-buf))
-      (ess-view-data-edit-mode))
-    (select-window (display-buffer buf))))
-
 
 (cl-defmethod ess-view-data-do-goto-page ((_backend (eql dplyr+DT)) page &optional pnumber)
   "Goto PAGE.  Just reset `ess-view-data-page-number' when backend is dplyr+DT.
 
 Optional argument PNUMBER The page number to go to."
   (let (result)
-    (setq ess-view-data-page-number
-          (pcase page
-            ('first 0)
-            ('last ess-view-data-total-page)
-            ('previous (max 0 (1- ess-view-data-page-number)))
-            ('next (min (1+ ess-view-data-page-number) ess-view-data-total-page))
-            ('page (max (min pnumber ess-view-data-total-page) 0))
-            (_ ess-view-data-page-number)))
-
-    (setq result (cons nil nil))
+    (setq ess-view-data-page-number (ess-view-data--page-number page pnumber))
+    (setq ess-view-data--render-object nil)
+    (setq result (cons nil (unless (ess-view-data--display-table-p)
+                              (ess-view-data--render-page-dt))))
     result))
 
 
@@ -1142,15 +1330,15 @@ Optional argument PROC The associated ESS process."
                            ")}\n")
                    nil nil nil nil proc))))
   (cl-pushnew ess-view-data-temp-object ess-view-data-temp-object-list)
-  (delete-dups ess-view-data-temp-object-list))
+  (delete-dups ess-view-data-temp-object-list)
+  (ess-view-data--ensure-protocol proc))
 
 
 (cl-defmethod ess-view-data--header-line ((_backend (eql data.table+magrittr)))
   "Make header-line for data.table+magrittr."
   (goto-char (point-min))
   (let ((lin 1))
-    (while ;; (looking-at-p "^\\(+\\|#\\)")
-        (search-forward-regexp "^\\([+]\\|#\\)" nil t)
+    (while (search-forward-regexp "^\\([+]\\|#\\)" nil t)
       (forward-line)
       (setq lin (1+ lin)))
     (unless (fboundp 'csv-header-line) (require 'csv-mode nil t))
@@ -1165,14 +1353,7 @@ Optional argument PROC The associated ESS process."
 Optional argument PROC-NAME The name of associated ESS process,
 usually `ess-local-process-name'.
 Optional argument PROC The associated ESS process."
-    (when (and proc-name proc
-               (not (process-get proc 'busy)))
-      (setq ess-view-data-total-page
-            (string-to-number
-             (car (ess-get-words-from-vector
-                   (format "as.character(nrow(%s))\n" ess-view-data-temp-object)))))
-      (setq ess-view-data-total-page
-            (1+ (floor (/ ess-view-data-total-page ess-view-data-rows-per-page))))))
+  (ess-view-data--get-total-page ess-view-data-rows-per-page proc-name proc))
 
 
 
@@ -1182,14 +1363,8 @@ Optional argument PROC The associated ESS process."
 Optional argument PROC-NAME The name of associated ESS process,
 usually `ess-local-process-name'.
 Optional argument PROC The associated ESS process."
-    (when (and proc-name proc
-               (not (process-get proc 'busy)))
-      (ess-command (format "rm(%s, envir = globalenv())\n" ess-view-data-temp-object))
-      (ess-write-to-dribble-buffer (format "[ESS-v] rm(%s, envir = globalenv())\n" ess-view-data-temp-object))))
+  (ess-view-data--rm-temp-object proc-name proc))
 
-
-;;; ** Utilities
-(defvar-local ess-view-data--group nil)
 
 (cl-defmethod ess-view-data--do-update ((_backend (eql data.table+magrittr)) fun action)
   "Update the data frame by data.table stepwisely.
@@ -1198,56 +1373,10 @@ Optional argument FUN What to do with the data, e.g.,
 verb like select, filter, and etc..
 Optional argument ACTION Parameter (R script) for FUN, e.g., columns for select."
   (let (cmdhist cmd result)
-    (setq cmdhist
-          (pcase fun
-            ('select
-             (format " %%>%% .[, .(%s)]"
-                     (mapconcat 'identity (delete-dups (nreverse action)) ",")))
-            ('filter
-             (format " %%>%% .[%s,]" action))
-            ('mutate
-             (format " %%>%% .[,`:=`(%s)]" action))
-            ('sort
-             (format " %%>%% setorder(., %s)"
-                     (mapconcat 'identity (delete-dups (nreverse action)) ",")))
-            ('group
-             ;; (error "No single group step for data.table+magrittr")
-             (setq ess-view-data--group
-                   (mapconcat 'identity (delete-dups (nreverse action)) ","))
-             nil)
-            ('ungroup
-             (error "No single ungroup step for data.table+magrittr"))
-            ('transmute
-             (format " %%>%% .[,`:=`(%s)]" action))
-            ('wide2long
-             (format " %%>%% melt(., %s)" action))
-            ('long2wide
-             (format " %%>%% dcast(., %s)" action))
-            ('slice
-             (if ess-view-data--group
-                 (format " %%>%% .[, .SD[%s], by = .(%s)]" action
-                         ess-view-data--group)
-               (error "Group is required for data.table+magrittr")))
-            ('unselect
-             (format " %%>%% .[,`:=`(%s)]"
-                     (mapconcat (lambda (x) (concat x " = NULL"))
-                                (delete-dups (nreverse action)) ",")))
-            (_
-             (format " %%>%% %s" action))))
-
+    (setq cmdhist (ess-view-data--verb-code 'data.table+magrittr fun action))
     (setq ess-view-data-page-number 0)
-    (setq cmd (concat
-               ess-view-data-temp-object " <<- " ess-view-data-temp-object cmdhist "; "
-               "local({"
-               (format (ess-view-data--do-print ess-view-data-current-update-print-backend)
-                       (concat ess-view-data-temp-object
-                               (unless ess-view-data-maxprint-p
-                                 (format "[(%1$d*%2$d + 1) : min((%1$d + 1)*%2$d, nrow(%s)),]"
-                                         ess-view-data-page-number
-                                         ess-view-data-rows-per-page
-                                         ess-view-data-temp-object)))
-                       ess-view-data-temp-object)
-               "})\n"))
+    (setq ess-view-data--render-object nil)
+    (setq cmd (ess-view-data--update-cmd cmdhist))
     (setq result (cons cmdhist cmd))
     result))
 
@@ -1259,37 +1388,11 @@ Optional argument FUN What to do with the data, e.g.,
 verb like count, unique, and etc..
 Optional argument ACTION Parameter (R script) for FUN, e.g., columns for count."
   (let (cmdhist cmd result)
-    (setq cmdhist
-          (pcase fun
-            ('count
-             (format " %%>%% .[, .N, by = .(%s)] "
-                     (mapconcat 'identity (delete-dups (nreverse action)) ",")))
-            ('unique
-             (format " %%>%% unique(., by = c(\"%s\"))"
-                     (replace-regexp-in-string
-                      "^`\\(.*\\)`$" "\\1"
-                      (mapconcat 'identity (delete-dups (nreverse action)) "\",\""))))
-            ('slice
-             (if ess-view-data--group
-                 (format " %%>%% .[, .SD[%s], by = .(%s)]" action
-                         ess-view-data--group)
-               (error "Group is required for data.table+magrittr")))
-            ('skimr
-             (format " %%>%% skimr::skim(%s)"
-                     (mapconcat 'identity (delete-dups (nreverse action)) ",")))
-            ('skimr-all
-             " %>% skimr::skim()")
-            ('summarise
-             (format " %%>%% %s" action))
-            (_
-             (format " %%>%% %s" action))))
-
-    (setq cmd (concat
-               "local({"
-               (format (ess-view-data--do-print ess-view-data-current-update-print-backend)
-                       (concat ess-view-data-temp-object cmdhist)
-                       ess-view-data-temp-object)
-               "})\n"))
+    (setq cmdhist (ess-view-data--verb-code 'data.table+magrittr fun action))
+    (setq ess-view-data--render-object
+          (concat ess-view-data-temp-object cmdhist))
+    (setq cmd (unless (ess-view-data--display-table-p)
+                (ess-view-data--summarise-cmd cmdhist)))
     (setq result (cons cmdhist cmd))
     result))
 
@@ -1301,18 +1404,8 @@ which will become the cmd history."
   (let (cmdhist cmd result)
     (setq cmdhist action)
     (setq ess-view-data-page-number 0)
-    (setq cmd (concat
-               ess-view-data-temp-object " <<- " cmdhist "; "
-               "local({"
-               (format (ess-view-data--do-print ess-view-data-current-update-print-backend)
-                       (concat ess-view-data-temp-object
-                               (unless ess-view-data-maxprint-p
-                                 (format "[(%1$d*%2$d + 1) : min((%1$d + 1)*%2$d, nrow(%s)),]"
-                                         ess-view-data-page-number
-                                         ess-view-data-rows-per-page
-                                         ess-view-data-temp-object)))
-                       ess-view-data-temp-object)
-               "})\n"))
+    (setq ess-view-data--render-object nil)
+    (setq cmd (ess-view-data--reset-cmd cmdhist))
     (setq result (cons cmdhist cmd))
     result))
 
@@ -1321,135 +1414,354 @@ which will become the cmd history."
 
 Optional argument PNUMBER The page number to go to."
   (let (cmd result)
-    (setq ess-view-data-page-number
-          (pcase page
-            ('first 0)
-            ('last ess-view-data-total-page)
-            ('previous (max 0 (1- ess-view-data-page-number)))
-            ('next (min (1+ ess-view-data-page-number) ess-view-data-total-page))
-            ('page (max (min pnumber ess-view-data-total-page) 0))
-            (_ ess-view-data-page-number)))
-
-    (setq cmd (concat
-               "local({"
-               (format (ess-view-data--do-print ess-view-data-current-update-print-backend)
-                       (concat ess-view-data-temp-object
-                               (unless ess-view-data-maxprint-p
-                                 (format "[(%1$d*%2$d + 1) : min((%1$d + 1)*%2$d, nrow(%s)),]"
-                                         ess-view-data-page-number
-                                         ess-view-data-rows-per-page
-                                         ess-view-data-temp-object)))
-                       ess-view-data-temp-object)
-               "})\n"))
+    (setq ess-view-data-page-number (ess-view-data--page-number page pnumber))
+    (setq ess-view-data--render-object nil)
+    (setq cmd (unless (ess-view-data--display-table-p)
+                (ess-view-data--render-page)))
     (setq result (cons nil cmd))
     result))
 
-(cl-defmethod ess-view-data--create-indirect-buffer
-  ((_backend (eql data.table+magrittr))
-   type fun obj-list temp-object parent-buf proc-name)
-  "Create an edit-indirect buffer and return it.
 
-Optional argument TYPE Action type, e.g., update, reset, summarise.
-Optional argument FUN Action function to do with data, e.g.,
-select, count, and etc..
-Optional argument OBJ-LIST Columns/variables to do with.
-Optional argument TEMP-OBJECT Temporary data in the view process.
-Optional argument PARENT-BUF The associated parent buffer for the view process.
-Optional argument PROC-NAME The name of associated ESS process,
-usually `ess-local-process-name'."
-  (let ((buf (get-buffer-create (format ess-view-data-source-buffer-name-format temp-object)))
-        pts)
+;;; * Table display (Phase 3)
+
+;;; ** Protocol parser
+
+(defun ess-view-data--page-data (text)
+  "Parse protocol v1 TEXT into (N ROWS COLS TYPES DATA).
+TEXT is the stdout of `ess_view_data_page'.  Returns nil when the
+EVD_N header line is missing (the R expression errored).  ROWS, COLS
+and TYPES are lists of strings; DATA is a list of rows, each a list
+of cell strings.  Empty data has nil ROWS/COLS/TYPES and no rows."
+  (let* ((lines (split-string text "\n"))
+         (idx (ess-view-data--page-index lines "EVD_N ")))
+    (when idx
+      (list (string-to-number (substring (nth idx lines) 6))
+            (ess-view-data--page-line (nth (1+ idx) lines) "EVD_ROWS ")
+            (ess-view-data--page-line (nth (+ 2 idx) lines) "EVD_COLS ")
+            (ess-view-data--page-line (nth (+ 3 idx) lines) "EVD_TYPES ")
+            (ess-view-data--page-rows (nthcdr (+ 4 idx) lines))))))
+
+(defun ess-view-data--page-index (lines prefix)
+  "Index of the first line in LINES starting with PREFIX, or nil."
+  (let ((i 0) found)
+    (while (and (null found) lines)
+      (when (string-prefix-p prefix (car lines))
+        (setq found i))
+      (setq i (1+ i))
+      (setq lines (cdr lines)))
+    found))
+
+(defun ess-view-data--page-line (line prefix)
+  "TAB-split payload of protocol LINE with PREFIX, or nil."
+  (when (and line (string-prefix-p prefix line))
+    (split-string (substring line (length prefix)) "\t" t)))
+
+(defun ess-view-data--page-rows (lines)
+  "Protocol data rows from LINES, dropping trailing empty lines.
+Empty cells are preserved so that columns stay aligned."
+  (let ((rows (copy-sequence lines)))
+    (while (and rows (equal "" (car (last rows))))
+      (setq rows (butlast rows)))
+    (delq nil (mapcar (lambda (l) (split-string l "\t")) rows))))
+
+;;; ** Rendering
+
+(defun ess-view-data--type-suffix (type)
+  "Header suffix for protocol TYPE."
+  (format "[%s]" type))
+
+(defun ess-view-data--numeric-p (type)
+  "Non-nil for right-aligned numeric protocol TYPES."
+  (member type '("dbl" "int")))
+
+(defun ess-view-data--table-label (col type)
+  "Header label for column COL of protocol TYPE."
+  (format "%s [%s]" col type))
+
+(defun ess-view-data--table-widths (cols types rows)
+  "Per-column display widths for COLS/TYPES/ROWS.
+The width is the cell length capped at `ess-view-data-column-width-cap',
+but at least the header label width."
+  (let ((lens (make-vector (length cols) 0)))
+    (dolist (r rows)
+      (let ((i 0))
+        (dolist (cell r)
+          (when (< i (length lens))
+            (aset lens i (max (aref lens i) (string-width cell)))
+            (setq i (1+ i))))))
+    (cl-loop for col in cols
+             for ty in types
+             for i from 0
+             collect (max (min ess-view-data-column-width-cap (aref lens i))
+                          (string-width (ess-view-data--table-label col ty))))))
+
+(defun ess-view-data--table-cell (cell width)
+  "CELL truncated to WIDTH, appending \"...\" when longer."
+  (if (> (string-width cell) width)
+      (concat (truncate-string-to-width cell (max 0 (- width 3))) "...")
+    cell))
+
+(defun ess-view-data--table-format (cols types widths)
+  "`tabulated-list-format' vector for COLS/TYPES with WIDTHS.
+The raw R column name is stored in the :evd-name plist so that
+`ess-view-data-table-sort' can regenerate an `arrange' verb."
+  (apply #'vector
+         (cl-loop for col in cols
+                  for ty in types
+                  for w in widths
+                  collect (list (ess-view-data--table-label col ty)
+                                w t
+                                :evd-name col
+                                :right-align (ess-view-data--numeric-p ty)))))
+
+(defun ess-view-data--table-entries (rows widths)
+  "`tabulated-list-entries' for protocol ROWS with per-column WIDTHS."
+  (cl-loop for r in rows
+           for i from 0
+           collect (cons i
+                         (apply #'vector
+                                (cl-loop for cell in r
+                                         for w in widths
+                                         collect (ess-view-data--table-cell cell w))))))
+
+(defun ess-view-data--table-sort-key (fmt)
+  "`tabulated-list-sort-key' reflecting `ess-view-data--sort-state' in FMT."
+  (when ess-view-data--sort-state
+    (let ((raw (car ess-view-data--sort-state)))
+      (cl-loop for col across fmt
+               when (equal (plist-get (nthcdr 3 col) :evd-name) raw)
+               return (cons (car col) (cdr ess-view-data--sort-state))))))
+
+(defun ess-view-data--table-print (data)
+  "Render parsed page DATA in the current buffer (table mode)."
+  (unless (derived-mode-p 'ess-view-data-table-mode)
+    (ess-view-data-table-mode))
+  (let* ((n (nth 0 data))
+         (cols (nth 2 data))
+         (types (nth 3 data))
+         (rows (nth 4 data)))
+    (setq-local ess-view-data-total-page
+                (ess-view-data--page-total n ess-view-data-rows-per-page))
+    (setq-local ess-view-data-page-number
+                (min ess-view-data-page-number (max 0 (1- ess-view-data-total-page))))
+    (setq-local ess-view-data--page-cols cols)
+    (if cols
+        (let ((widths (ess-view-data--table-widths cols types rows)))
+          (setq tabulated-list-format (ess-view-data--table-format cols types widths))
+          (setq tabulated-list-entries (ess-view-data--table-entries rows widths)))
+      (setq tabulated-list-format (vector (list "No data" 20 t)))
+      (setq tabulated-list-entries (list (cons 0 (vector (format "%d rows" n))))))
+    (setq tabulated-list-sort-key (ess-view-data--table-sort-key tabulated-list-format))
+    (tabulated-list-init-header)
+    (tabulated-list-print t)
+    (ess-view-data-mode 1)))
+
+(defun ess-view-data--table-error (text)
+  "Show protocol failure TEXT in the current table buffer."
+  (unless (derived-mode-p 'ess-view-data-table-mode)
+    (ess-view-data-table-mode))
+  (setq tabulated-list-format (vector (list "Error" 60 t)))
+  (setq tabulated-list-entries
+        (cl-loop for l in (split-string text "\n" t)
+                 for i from 0
+                 collect (cons i (vector l))))
+  (tabulated-list-init-header)
+  (tabulated-list-print t))
+
+(defun ess-view-data--table-render-page (buf)
+  "Query the current page of BUF from R and render it as a table."
+  (let* ((proc-name (buffer-local-value 'ess-local-process-name buf))
+         (proc (get-process proc-name))
+         text data)
+    (when (and proc-name proc (not (process-get proc 'busy)))
+      (setq text (with-current-buffer buf
+                   (ess-string-command (ess-view-data--protocol-cmd))))
+      (setq data (ess-view-data--page-data text))
+      (with-current-buffer buf
+        (if data
+            (ess-view-data--table-print data)
+          (ess-view-data--table-error text))))))
+
+;;; ** Render dispatch and shared refresh
+
+(defun ess-view-data--render (buf)
+  "Render the current page of BUF per `ess-view-data-display-backend'.
+For `table', query R with the page-data protocol and redisplay the
+tabulated list.  For `print'/`kable', do nothing: the text command
+embeds the print expression."
+  (when (ess-view-data--display-table-p)
+    (ess-view-data--table-render-page buf)))
+
+(defun ess-view-data--refresh-view (buf type fun command)
+  "Send COMMAND (cons HIST . R-CODE) to R and refresh the view buffer BUF.
+TYPE is `update', `reset' or `summarise'; FUN the verb symbol.
+Updates the Trace history, page state and dribble log, then re-renders
+according to `ess-view-data-display-backend'."
+  (let* ((proc-name (buffer-local-value 'ess-local-process-name buf))
+         (proc (get-process proc-name)))
+    (when (and proc-name proc command (cdr command))
+      (ess-view-data--run-r
+       (concat "{" (cdr command) "}")
+       (unless (ess-view-data--display-table-p) buf)
+       nil nil proc))
+    (ess-write-to-dribble-buffer (format "[ESS-v] %s.\n" (symbol-name fun)))
     (with-current-buffer buf
-      (ess-r-mode)
-      (set-buffer-modified-p nil)
-      (setq ess-view-data--parent-buffer parent-buf)
-      (setq ess-view-data--reset-buffer-p t)
-      (setq ess-view-data--action `((:type . ,type) (:function . ,fun)))
-      ;; (print (alist-get :function ess-view-data--action))
-      ;; (print (alist-get ':type ess-view-data--action))
-      (insert "# Insert variable name[s] (C-c i[I]), Insert Values (C-c l[L])\n")
-      (insert "# Line started with `#' will be omitted\n")
-      (insert "# Don't comment code as all code will be wrapped in one line\n")
-      (pcase fun
-        ('filter
-         (setq ess-view-data-completion-object (car obj-list))
-         (insert "# DT[...,]\n")
-         (setq pts (point))
-         (insert (mapconcat (lambda (x) (propertize x 'evd-object x))
-                            (delete-dups (nreverse obj-list)) "&"))
-         (goto-char pts))
-        ('mutate
-         (insert "# DT[,`:=`(%s)]\n")
-         (setq pts (point))
-         (insert (mapconcat (lambda (x) (format " = %s" (propertize x 'evd-object x)))
-                            (delete-dups (nreverse obj-list)) ","))
-         (goto-char pts))
-        ('wide2long
-         (insert "# melt(DT, ...)\n")
-         (insert (format "id.vars = c(\"%s\"), measure = col to fill, variable.name = , value.name = c(\"%s\")"
-                         (car obj-list) (nth 1 obj-list))))
-        ('long2wide
-         (insert "# dcast(DT, ...)\n")
-         (insert (format "id? ~ %s, value.var = c(\"%s\")" (car obj-list)
-                         (nth 1 obj-list))))
-        ('summarise
-         (insert "# DT[...] \n# Not limited to function summarise\n")
-         ;; (insert (format "summarise(mean = mean(%s, na.rm = TRUE), n = n())" obj-list))
-         (insert ".[, .( ), by = .(")
-         (insert (mapconcat (lambda (x) (format "%s" (propertize x 'evd-object x)))
-                            (delete-dups (nreverse obj-list)) ","))
-         (insert ")]"))
-        ('reset
-         (insert "# reset\n")
-         (insert obj-list))
-        (_
-         (insert "# ... \n")
-         (setq pts (point))
-         (insert (mapconcat 'identity (delete-dups (nreverse obj-list)) ","))
-         (goto-char pts)))
-      (setq ess-local-process-name proc-name)
-      (setq ess-view-data-temp-object
-            (buffer-local-value 'ess-view-data-temp-object parent-buf))
-      (ess-view-data-edit-mode))
-    (select-window (display-buffer buf))))
+      (when (memq type '(update reset))
+        (setq ess-view-data-history
+              (if (eql type 'reset) (car command)
+                (concat ess-view-data-history (car command))))
+        (setq ess-view-data-page-number 0))
+      (setq ess-view-data--last-command (car command))
+      (ess-write-to-dribble-buffer (format "# Trace: %s\n" ess-view-data-history))
+      (ess-write-to-dribble-buffer (format "# Last: %s\n" (car command)))
+      (if (ess-view-data--display-table-p)
+          (ess-view-data--render buf)
+        (when (memq type '(update reset))
+          (ess-view-data-get-total-page ess-view-data-current-backend proc-name proc))
+        (goto-char (point-min))
+        (when ess-view-data-show-code
+          (insert (format "# Trace: %s\n" ess-view-data-history))
+          (insert (format "# Last: %s\n" (car command))))
+        (when (memq type '(update reset))
+          (unless (or ess-view-data-maxprint-p ess-view-data-show-no-page-number)
+            (insert (format "# Page number: %d / %d\n"
+                            (1+ ess-view-data-page-number) ess-view-data-total-page))))
+        (goto-char (point-min))
+        (ess-view-data-mode 1)
+        (goto-char (point-min))
+        (ess-view-data--header-line ess-view-data-current-backend)))))
 
+;;; ** Table major mode
+
+(defvar ess-view-data-table-mode-map
+  (let ((map (make-composed-keymap nil tabulated-list-mode-map)))
+    (define-key map "S" #'ess-view-data-table-sort)
+    map)
+  "Keymap for `ess-view-data-table-mode'.")
+
+(defvar ess-view-data-table--sort-button-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map [header-line mouse-1] #'ess-view-data-table-col-sort)
+    (define-key map [header-line mouse-2] #'ess-view-data-table-col-sort)
+    (define-key map [mouse-1] #'ess-view-data-table-col-sort)
+    (define-key map [mouse-2] #'ess-view-data-table-col-sort)
+    (define-key map "RET" #'ess-view-data-table-sort)
+    map)
+  "Header-line sort keymap for `ess-view-data-table-mode'.")
+
+(define-derived-mode ess-view-data-table-mode tabulated-list-mode
+  "ESS-V Table"
+  "Major mode displaying an R data page as a tabulated list.
+
+The header shows each column with its R type (e.g. \"mpg [dbl]\").
+`S' or a header click regenerates a server-side `arrange' verb so
+that sorting always applies to the whole data, not just the page."
+  (setq-local tabulated-list-sort-key nil)
+  (setq-local tabulated-list-sort-button-map ess-view-data-table--sort-button-map)
+  (setq buffer-read-only t))
+
+;;; ** Header sort (server-side arrange)
+
+(defun ess-view-data-table--label-raw (label)
+  "Raw R column name for header LABEL in `tabulated-list-format'."
+  (cl-loop for col across tabulated-list-format
+           when (equal (car col) label)
+           return (plist-get (nthcdr 3 col) :evd-name)))
+
+(defun ess-view-data-table--apply-sort (raw desc-p)
+  "Arrange the whole data by column RAW; DESC-P for descending.
+Generates the backend `sort' verb and runs it through the update
+chain, so the table re-renders from a fully sorted data set."
+  (let* ((backend ess-view-data-current-backend)
+         (desc-fmt (plist-get (alist-get backend ess-view-data-backend-setting) :desc))
+         (col (if (and desc-p desc-fmt) (format desc-fmt raw) raw))
+         (command (ess-view-data--do-update backend 'sort (list col))))
+    (setq ess-view-data--sort-state (cons raw desc-p))
+    (ess-view-data--refresh-view (current-buffer) 'update 'sort command)))
+
+(defun ess-view-data-table-sort (&optional n)
+  "Sort the whole data by the column at point (server-side arrange).
+A second sort on the same column toggles the direction.  With a
+numeric prefix argument N, sort the Nth column."
+  (interactive "P")
+  (let* ((label (if n (car (aref tabulated-list-format n))
+                  (get-text-property (point) 'tabulated-list-column-name)))
+         (raw (ess-view-data-table--label-raw label)))
+    (when raw
+      (ess-view-data-table--apply-sort
+       raw (not (equal label (car ess-view-data--sort-state)))))))
+
+(defun ess-view-data-table-col-sort (&optional e)
+  "Sort the whole data by the column clicked in the header (event E)."
+  (interactive "e")
+  (let* ((pos (event-start e))
+         (obj (posn-object pos))
+         (label (get-text-property (if obj (cdr obj) (posn-point pos))
+                                   'tabulated-list-column-name
+                                   (car obj)))
+         (raw (ess-view-data-table--label-raw label)))
+    (when raw
+      (ess-view-data-table--apply-sort
+       raw (not (equal label (car ess-view-data--sort-state)))))))
+
+;;; ** Trace presentation
+
+(defun ess-view-data--mode-line-trace ()
+  "Truncated Trace for the mode line; empty when there is no history."
+  (if ess-view-data-history
+      (let ((s (replace-regexp-in-string " %>% " " | " ess-view-data-history)))
+        (if (> (length s) 40)
+            (concat " " (substring s 0 37) "...")
+          (concat " " s)))
+    ""))
+
+(defun ess-view-data-show-history ()
+  "Show the full Trace and Last history of the view data.
+The history is displayed in a read-only buffer; kill it with `q'."
+  (interactive)
+  (let ((buf (get-buffer-create "*ess-view-data-history*")))
+    (with-current-buffer buf
+      (special-mode)
+      (let ((inhibit-read-only t))
+        (erase-buffer)
+        (insert (format "Trace: %s\n\n" (or ess-view-data-history "")))
+        (insert (format "Last: %s\n" (or ess-view-data--last-command ""))))
+      (goto-char (point-min)))
+    (pop-to-buffer buf)))
 
 
 ;;; * save data
 
 (cl-defmethod ess-view-data-do-save ((_backend (eql write.csv)) file-name)
-  "Ess view data doing select by write.csv stepwise.
+  "Save the current view data with write.csv.
 
 Optional argument FILE-NAME file name."
   (let (cmd result)
-    (setq cmd (concat
-               "write.csv(" ess-view-data-temp-object ", file = \""
-               file-name
-               "\")\n"))
+    (setq cmd (format "write.csv(%s, file = %s)\n"
+                      ess-view-data-temp-object
+                      (ess-view-data--r-quote-string file-name)))
     (setq result (cons nil cmd))
     result))
 
 (cl-defmethod ess-view-data-do-save ((_backend (eql readr::write_csv)) file-name)
-  "Ess view data doing select by readr::write_csv stepwise.
+  "Save the current view data with readr::write_csv.
 
-Optional argument FILE-NAME file-name."
+Optional argument FILE-NAME file name."
   (let (cmd result)
-    (setq cmd (concat
-               "readr::write_csv(" ess-view-data-temp-object ", file = \""
-               file-name
-               "\")\n"))
+    (setq cmd (format "readr::write_csv(%s, file = %s)\n"
+                      ess-view-data-temp-object
+                      (ess-view-data--r-quote-string file-name)))
     (setq result (cons nil cmd))
     result))
 
 (cl-defmethod ess-view-data-do-save ((_backend (eql data.table::fwrite)) file-name)
-  "Ess view data doing select by data.table::fwrite stepwise.
+  "Save the current view data with data.table::fwrite.
 
-Optional argument FILE-NAME file-name."
+Optional argument FILE-NAME file name."
   (let (cmd result)
-    (setq cmd (concat
-               "data.table::fwrite(" ess-view-data-temp-object ", file = \""
-               file-name
-               "\")\n"))
+    (setq cmd (format "data.table::fwrite(%s, file = %s)\n"
+                      ess-view-data-temp-object
+                      (ess-view-data--r-quote-string file-name)))
     (setq result (cons nil cmd))
     result))
 
@@ -1492,14 +1804,12 @@ Argument PROP text property to get the object for completion."
 Optional argument ARG if non-nil, it will read the which variable
 to be completed."
   (interactive "P")
-  (unless (and ;; (string= "R" ess-dialect)
+  (unless (and
            ess-local-process-name)
     (error "Not in an R buffer with attached process"))
   (let* ((buf (current-buffer))
          (proc-name (buffer-local-value 'ess-local-process-name buf))
          (proc (get-process proc-name)))
-    ;; Initializing backed
-    ;; (ess-view-data--initialize-backend ess-view-data-current-backend proc-name proc)
 
     (unless ess-view-data-completion-candidate
       (when (and proc-name proc
@@ -1560,14 +1870,12 @@ to be completed."
 (defun ess-view-data-insert-all-cols ()
   "Insert all column/variable names."
   (interactive)
-  (unless (and ;; (string= "R" ess-dialect)
+  (unless (and
            ess-local-process-name)
     (error "Not in an R buffer with attached process"))
   (let* ((buf (current-buffer))
          (proc-name (buffer-local-value 'ess-local-process-name buf))
          (proc (get-process proc-name)))
-    ;; Initializing backed
-    ;; (ess-view-data--initialize-backend ess-view-data-current-backend proc-name proc)
 
     (unless ess-view-data-completion-candidate
       (when (and proc-name proc
@@ -1592,14 +1900,12 @@ to be completed."
 (defun ess-view-data-insert-all-values ()
   "Insert all column/variable names."
   (interactive)
-  (unless (and ;; (string= "R" ess-dialect)
+  (unless (and
            ess-local-process-name)
     (error "Not in an R buffer with attached process"))
   (let* ((buf (current-buffer))
          (proc-name (buffer-local-value 'ess-local-process-name buf))
          (proc (get-process proc-name)))
-    ;; Initializing backed
-    ;; (ess-view-data--initialize-backend ess-view-data-current-backend proc-name proc)
 
     (unless ess-view-data-completion-candidate
       (when (and proc-name proc
@@ -1633,14 +1939,12 @@ to be completed."
 (defun ess-view-data-complete-set-object ()
   "Set object for completion."
   (interactive)
-  (unless (and ;; (string= "R" ess-dialect)
+  (unless (and
            ess-local-process-name)
     (error "Not in an R buffer with attached process"))
   (let* ((buf (current-buffer))
          (proc-name (buffer-local-value 'ess-local-process-name buf))
          (proc (get-process proc-name)))
-    ;; Initializing backed
-    ;; (ess-view-data--initialize-backend ess-view-data-current-backend proc-name proc)
 
     (unless ess-view-data-completion-candidate
       (when (and proc-name proc
@@ -1680,6 +1984,12 @@ Can be called only when the current buffer is an edit-indirect buffer."
          (fun (alist-get :function ess-view-data--action))
          (type (alist-get :type ess-view-data--action))
          command)
+    ;; Keep the edit buffer when R is busy: killing it first would
+    ;; discard the user's edits.  Signal a `user-error' instead so
+    ;; that they can retry once R is idle again (A6).
+    (when (and proc-name proc (process-get proc 'busy))
+      (user-error "R process %s is busy; wait for it to finish and retry"
+                  (process-name proc)))
     (with-current-buffer (current-buffer)
       (when ess-view-data--reset-buffer-p
         (save-excursion
@@ -1694,8 +2004,7 @@ Can be called only when the current buffer is an edit-indirect buffer."
 
     (pop-to-buffer parent-buffer)
 
-    (when (and proc-name proc command
-               (not (process-get proc 'busy)))
+    (when (and proc-name proc command)
       (setq command
             (pcase type
               ('update
@@ -1704,33 +2013,7 @@ Can be called only when the current buffer is an edit-indirect buffer."
                (ess-view-data--do-summarise ess-view-data-current-backend fun command))
               ('reset
                (ess-view-data--do-reset ess-view-data-current-backend command))))
-      (ess-command (concat "{" (cdr command) "}") parent-buffer nil nil nil proc)
-      (ess-write-to-dribble-buffer (format "[ESS-v] %s.\n" (symbol-name fun)))
-      (with-current-buffer parent-buffer
-        ;; (ansi-color-apply-on-region (point-min) (point-max))
-        (when (memq type '(update reset))
-          (if (eql type 'reset)
-              (setq ess-view-data-history (car command))
-            (setq ess-view-data-history (concat ess-view-data-history (car command))))
-          (setq ess-view-data-page-number 0)
-          (ess-view-data-get-total-page ess-view-data-current-backend proc-name proc))
-        (ess-write-to-dribble-buffer (format "# Trace: %s\n" ess-view-data-history))
-        (ess-write-to-dribble-buffer (format "# Last: %s\n" (car command)))
-        (goto-char (point-min))
-        ;; (toggle-truncate-lines 1)
-        ;; (setq-local scroll-preserve-screen-position t)
-        (when ess-view-data-show-code
-          (insert (format "# Trace: %s\n" ess-view-data-history))
-          (insert (format "# Last: %s\n" (car command))))
-        (when (memq type '(update reset))
-          (unless (or ess-view-data-maxprint-p ess-view-data-show-no-page-number)
-                  (insert (format "# Page number: %d / %d\n"
-                                  (1+ ess-view-data-page-number) ess-view-data-total-page))))
-        ;; (delete-line)
-        (goto-char (point-min))
-        (ess-view-data-mode 1)
-        (goto-char (point-min))
-        (ess-view-data--header-line ess-view-data-current-backend)))))
+      (ess-view-data--refresh-view parent-buffer type fun command))))
 
 
 (defun ess-view-data-do-apply (type fun indirect &optional desc trans prompt)
@@ -1742,7 +2025,7 @@ Argument INDIRECT Indirect buffer to edit the parameters or verbs.
 Optional argument DESC if non-nil, then descending.
 Optional argument TRANS if non-nil, read key and value for transform.
 Optional argument PROMPT prompt for `read-string'."
-  (unless (and ;; (string= "R" ess-dialect)
+  (unless (and
            ess-local-process-name)
     (error "Not in an R buffer with attached process"))
   (let* ((buf (current-buffer))
@@ -1812,31 +2095,8 @@ Optional argument PROMPT prompt for `read-string'."
                    (ess-view-data--do-update ess-view-data-current-backend fun obj-list))
                   ('summarise
                    (ess-view-data--do-summarise ess-view-data-current-backend fun obj-list)))))
-        (when (and proc-name proc command
-                   (not (process-get proc 'busy)))
-          (ess-command (concat "{" (cdr command) "}") buf nil nil nil proc)
-          (ess-write-to-dribble-buffer (format "[ESS-v] %s.\n" (symbol-name fun)))
-          (with-current-buffer buf
-            ;; (ansi-color-apply-on-region (point-min) (point-max))
-            (when (eql type 'update)
-              (setq ess-view-data-history (concat ess-view-data-history (car command)))
-              (setq ess-view-data-page-number 0)
-              (ess-view-data-get-total-page ess-view-data-current-backend proc-name proc))
-            (ess-write-to-dribble-buffer (format "# Trace: %s\n" ess-view-data-history))
-            (ess-write-to-dribble-buffer (format "# Last: %s\n" (car command)))
-            (goto-char (point-min))
-            (when ess-view-data-show-code
-              (insert (format "# Trace: %s\n" ess-view-data-history))
-              (insert (format "# Last: %s\n" (car command))))
-            (when (eql type 'update)
-              (unless (or ess-view-data-maxprint-p ess-view-data-show-no-page-number)
-                      (insert (format "# Page number: %d / %d\n"
-                                      (1+ ess-view-data-page-number) ess-view-data-total-page))))
-            ;; (delete-line)
-            (goto-char (point-min))
-            (ess-view-data-mode 1)
-            (goto-char (point-min))
-            (ess-view-data--header-line ess-view-data-current-backend))))))))
+        (when (and proc-name proc command)
+          (ess-view-data--refresh-view buf type fun command)))))))
 
 
 
@@ -1847,7 +2107,7 @@ Optional argument PROMPT prompt for `read-string'."
   (ess-view-data-do-apply 'update 'select nil nil))
 
 (defun ess-view-data-unselect ()
-  "Select columns/variables."
+  "Unselect columns/variables."
   (interactive)
   (ess-view-data-do-apply 'update 'unselect nil nil))
 
@@ -1928,7 +2188,7 @@ Optional argument PROMPT prompt for `read-string'."
   (ess-view-data-do-apply 'summarise 'count nil nil))
 
 (defun ess-view-data-skimr ()
-  "Count."
+  "Skim the data with skimr."
   (interactive)
   (ess-view-data-do-apply 'summarise 'skimr nil nil))
 
@@ -1938,9 +2198,11 @@ Optional argument PROMPT prompt for `read-string'."
   (ess-view-data-do-apply 'summarise 'summarise t nil))
 
 (defun ess-view-data-overview ()
-  "Ess view data do summarise."
+  "Overview the data with skimr over all columns.
+
+Equivalent to `ess-view-data-skimr' with no columns selected (A9)."
   (interactive)
-  (ess-view-data-do-apply 'summarise 'overview t nil))
+  (ess-view-data-do-apply 'summarise 'skimr-all nil nil))
 
 
 (defun ess-view-data-verbs (verb)
@@ -1980,7 +2242,7 @@ Optional argument PROMPT prompt for `read-string'."
 (defun ess-view-data-goto-page (page &optional pnumber)
   "Goto PAGE.
 Optional argument PNUMBER page number to go."
-  (unless (and ;; (string= "R" ess-dialect)
+  (unless (and
            ess-local-process-name)
     (error "Not in an R buffer with attached process"))
   (let* ((buf (current-buffer))
@@ -1993,21 +2255,18 @@ Optional argument PNUMBER page number to go."
     (setq command
           (ess-view-data-do-goto-page ess-view-data-current-backend page pnumber))
 
-    (when (and proc-name proc command
-               (not (process-get proc 'busy)))
-      (ess-command (concat "{" (cdr command) "}") buf nil nil nil proc)
-      (with-current-buffer buf
+    (when (and proc-name proc command (cdr command))
+      (ess-view-data--run-r (concat "{" (cdr command) "}") buf nil nil proc))
+    (with-current-buffer buf
+      (if (ess-view-data--display-table-p)
+          (ess-view-data--render buf)
         (goto-char (point-min))
-        ;; (ansi-color-apply-on-region (point-min) (point-max))
-        ;; (toggle-truncate-lines 1)
-        ;; (setq-local scroll-preserve-screen-position t)
         (when ess-view-data-show-code
           (insert (format "# Trace: %s\n" ess-view-data-history)))
-        (when ess-view-data-show-no-page-number
+        (unless (or ess-view-data-maxprint-p ess-view-data-show-no-page-number)
           (insert (format "# Page number: %d / %d\n"
                           (1+ ess-view-data-page-number)
                           ess-view-data-total-page)))
-        ;; (delete-line)
         (goto-char (point-min))
         (ess-view-data-mode 1)
         (goto-char (point-min))
@@ -2036,11 +2295,10 @@ Optional argument PNUMBER page number to go."
 
 
 (defun ess-view-data-goto-page-number (&optional pnumber)
-  "Ess view data do select.
+  "Goto page number PNUMBER (1-based).
 
 Optional argument PNUMBER The page number to go to."
   (interactive "NGoto page:")
-  ;; (unless pnumber )
   (ess-view-data-goto-page 'page (1- pnumber)))
 
 
@@ -2048,7 +2306,7 @@ Optional argument PNUMBER The page number to go to."
 (defun ess-view-data-save ()
   "Ess view data do save."
   (interactive)
-  (unless (and ;; (string= "R" ess-dialect)
+  (unless (and
            ess-local-process-name)
     (error "Not in an R buffer with attached process"))
   (let* ((buf (current-buffer))
@@ -2064,9 +2322,8 @@ Optional argument PNUMBER The page number to go to."
     (if file-name
         (setq command
               (ess-view-data-do-save ess-view-data-current-save-backend (car file-name))))
-    (when (and proc-name proc command
-               (not (process-get proc 'busy)))
-      (ess-command (concat "{" (cdr command) "}") nil nil nil nil proc)
+    (when (and proc-name proc command)
+      (ess-view-data--run-r (concat "{" (cdr command) "}") nil nil nil proc)
       (ess-write-to-dribble-buffer "[ESS-v] Saved.\n")
       (ess-write-to-dribble-buffer (format "# Trace: %s\n" ess-view-data-history))
       (ess-write-to-dribble-buffer (format "# Last: %s\n" (car command)))
@@ -2102,60 +2359,58 @@ Optional argument PNUMBER The page number to go to."
         (setq mode-line-process
               '(" ["
                 (:eval (format "%d/%d"
-                               ess-view-data-page-number
+                               (1+ ess-view-data-page-number)
                                ess-view-data-total-page))
+                (:eval (ess-view-data--mode-line-trace))
                 "]"))
         (force-mode-line-update)
         (add-hook 'kill-buffer-hook #'ess-view-data-kill-buffer-hook nil t))))
 
 (defun ess-view-data-print-ex (&optional obj proc-name maxprint)
-  "Do print.
+  "View OBJ in an `ess-view-data' buffer.
 
 Optional argument OBJ the object (data.frame/tibble etc.) to print and view.
 Optional argument PROC-NAME the name of associated ESS process.
-Optional argument MAXPRINT if non-nil, 100 rows/lines per page; if t, show all."
+Optional argument MAXPRINT if non-nil, toggle `ess-view-data-maxprint-p'."
   (interactive "P")
   (let* ((obj (or obj ess-view-data-object))
          (proc-name (or proc-name (buffer-local-value 'ess-local-process-name (current-buffer))))
          (buf (get-buffer-create (format ess-view-data-buffer-name-format obj proc-name)))
-         ;; (proc-name-buf (buffer-local-value 'ess-local-process-name buf))
          (proc (get-process proc-name))
          command)
-    ;; (if (or (not proc-name-buf) (equal proc-name proc-name-buf))
-        ;; A new view or from the same process
-        (with-current-buffer buf
-          (if maxprint
-              (setq ess-view-data-maxprint-p (not ess-view-data-maxprint-p)))
-          (unless ess-view-data-object
-            (setq ess-view-data-object obj)
-            (setq ess-local-process-name proc-name))
-          (ess-view-data--initialize-backend ess-view-data-current-backend proc-name proc)
-          (ess-view-data-get-total-page ess-view-data-current-backend proc-name proc)
-          (setq command
-                (ess-view-data--do-reset ess-view-data-current-backend
-                                        (format "%s" ess-view-data-temp-object))))
+    (with-current-buffer buf
+      (if maxprint
+          (setq ess-view-data-maxprint-p (not ess-view-data-maxprint-p)))
+      (unless ess-view-data-object
+        (setq ess-view-data-object obj)
+        (setq ess-local-process-name proc-name))
+      (ess-view-data--initialize-backend ess-view-data-current-backend proc-name proc)
+      (unless (ess-view-data--display-table-p)
+        (ess-view-data-get-total-page ess-view-data-current-backend proc-name proc))
+      (setq command
+            (ess-view-data--do-reset ess-view-data-current-backend
+                                    (format "%s" ess-view-data-temp-object))))
 
-    (when (and proc-name proc
-               (not (process-get proc 'busy)))
-      (ess-command (concat "{" (cdr command) "}") buf nil nil nil proc)
-      ;; (ansi-color-apply-on-region (point-min) (point-max))
+    (when (and proc-name proc command (cdr command))
+      (ess-view-data--run-r (concat "{" (cdr command) "}") buf nil nil proc)
       (ess-write-to-dribble-buffer "[ESS-v] Print.\n")
       (ess-write-to-dribble-buffer (format "# Trace: %s\n" ess-view-data-history))
       (with-current-buffer buf
         (setq-local scroll-preserve-screen-position t)
         (toggle-truncate-lines 1)
-        (goto-char (point-min))
-        (when ess-view-data-show-code
-          (insert (format "# Trace: %s\n" ess-view-data-history)))
-        (unless (or ess-view-data-maxprint-p ess-view-data-show-no-page-number)
-          (insert (format "# Page number: %d / %d\n"
-                          (1+ ess-view-data-page-number)
-                          ess-view-data-total-page)))
-        ;; (delete-line)
-        (goto-char (point-min))
-        (ess-view-data--header-line ess-view-data-current-backend)
-        (ess-view-data-mode 1))
-      buf)))
+        (if (ess-view-data--display-table-p)
+            (ess-view-data--render buf)
+          (goto-char (point-min))
+          (when ess-view-data-show-code
+            (insert (format "# Trace: %s\n" ess-view-data-history)))
+          (unless (or ess-view-data-maxprint-p ess-view-data-show-no-page-number)
+            (insert (format "# Page number: %d / %d\n"
+                            (1+ ess-view-data-page-number)
+                            ess-view-data-total-page)))
+          (goto-char (point-min))
+          (ess-view-data--header-line ess-view-data-current-backend)
+          (ess-view-data-mode 1))))
+      buf))
 
 
 
@@ -2164,12 +2419,11 @@ Optional argument MAXPRINT if non-nil, 100 rows/lines per page; if t, show all."
   "Ess R dv using pprint.
 Optional argument MAXPRINT maxprint."
   (interactive "P")
-  (unless (and ;; (string= "R" ess-dialect)
+  (unless (and
            ess-local-process-name)
     (error "Not in an R buffer with attached process"))
   (let* ((obj (or ess-view-data-object
                  (tabulated-list-get-id)
-                 ;; (current-word)
                  (funcall ess-view-data-read-string
                   "Object: "
                   (ess-get-words-from-vector "ls(envir = .GlobalEnv)\n")
@@ -2178,9 +2432,9 @@ Optional argument MAXPRINT maxprint."
 
 
 (defun ess-view-data-clean-up ()
-  "Ess view data do select."
+  "Clean up the temporary objects created by the view process."
   (interactive)
-  (unless (and ;; (string= "R" ess-dialect)
+  (unless (and
            ess-local-process-name)
     (error "Not in an R buffer with attached process"))
   (let* ((buf (current-buffer))
@@ -2194,17 +2448,17 @@ Optional argument MAXPRINT maxprint."
     (when (and proc-name proc command
                (not (process-get proc 'busy)))
       (ess-command (concat "{" command "}") nil nil nil nil proc))
-    (setq ess-view-data-temp-object-list '(ess-view-data-temp-object))))
+    (setq ess-view-data-temp-object-list (list ess-view-data-temp-object))))
 
 
 (defun ess-view-data-toggle-maxprint ()
-  "Ess view data do select."
+  "Toggle whether to print all rows in one page."
   (interactive)
   (setq ess-view-data-page-number 0)
   (setq ess-view-data-maxprint-p (not ess-view-data-maxprint-p)))
 
 (defun ess-view-data-make-header-line ()
-  "Ess view data do select."
+  "Make the header line for the current view buffer."
   (interactive)
   (ess-view-data--header-line ess-view-data-current-backend))
 
@@ -2216,7 +2470,7 @@ Argument MANIPULATE `ess-view-data-current-backend' from
 `ess-view-data-backend-list'.
 Argument UPDATE `ess-view-data-current-update-print-backend' from
 `ess-view-data-print-backend-list'.
-Argument SUMMARISE `ess-view-data-current-summarize-print-backend' from
+Argument SUMMARISE `ess-view-data-current-summarise-print-backend' from
 `ess-view-data-print-backend-list'.
 Argument WRITE `ess-view-data-current-save-backend' from
 `ess-view-data-save-backend-list'.
@@ -2238,7 +2492,7 @@ Argument COMPLETE `ess-view-data-current-complete-backend' from
 				      nil t)
                      (completing-read
                       (format "Backend for summary print in Emacs buffer (%s): "
-                              ess-view-data-current-summarize-print-backend)
+                              ess-view-data-current-summarise-print-backend)
 				      (mapcar (lambda (x)
 						        (symbol-name x))
 					          ess-view-data-print-backend-list)
@@ -2262,7 +2516,7 @@ Argument COMPLETE `ess-view-data-current-complete-backend' from
   (unless (or (null update) (string-blank-p update))
     (setq ess-view-data-current-update-print-backend (intern update)))
   (unless (or (null summarise) (string-blank-p summarise))
-    (setq ess-view-data-current-summarize-print-backend (intern summarise)))
+    (setq ess-view-data-current-summarise-print-backend (intern summarise)))
   (unless (or (null write) (string-blank-p write))
     (setq ess-view-data-current-save-backend (intern write)))
   (unless (or (null complete) (string-blank-p complete))

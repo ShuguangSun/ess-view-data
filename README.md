@@ -15,7 +15,7 @@ Clone this repository, or install from MELPA. Add the following to your `.emacs`
 (require 'ess-view-data)
 ```
 
-Call `ess-view-data-print`, select a object whichever can be convert to a tibble or data.table depending on the backend, and then a buffer will pop up with data listed/printed. Further verbs can be done, like filter, select/unselect, mutate, group/ungroup, count, unique, summarise, and etc. It can be reset (`ess-view-data-reset`) any time.
+Call `ess-view-data-print`, select a object whichever can be convert to a tibble or data.table depending on the backend, and then a buffer will pop up with data listed/printed. By default the data is rendered as a structured table via `tabulated-list`: column types are shown in the header, numeric columns are right aligned, long cells are truncated and NA values are displayed. Set `ess-view-data-display-backend` to `print` or `kable` to keep the historical text output. Further verbs can be done, like filter, select/unselect, mutate, group/ungroup, count, unique, summarise, and etc. It can be reset (`ess-view-data-reset`) any time.
 
 To avoid mistaking break the orignial data, it will make a copy (e.g., `as_tibble(dt)` or `as.data.table(dt)`) as default.
 
@@ -120,6 +120,7 @@ Verbs:
 ![ess-view-data-overview-skimr](screenshot/ess-view-data-overview-skimr.gif)
 
 - [x] ess-view-data-goto-page / -next-page / -preious-page / -first-page / -last-page / -page-number
+- [x] ess-view-data-show-history: show the full action history (Trace/Last) in a separate buffer (in `table` display)
 - [x] ess-view-data-save
 
 Utitlities:
@@ -136,4 +137,5 @@ In indirect buffer, for example, the buffer poped up when ess-view-data-filter i
 ## TODO
 
 - [ ] row.names support
-- [ ] header-line
+- [x] clickable table header for sorting (in `table` display)
+- [ ] multi-line header-line (needs Emacs 27+)
