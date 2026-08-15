@@ -46,6 +46,18 @@
 ;;
 ;;   NB: the setting is global; refresh the current view buffer
 ;;   (ess-view-data-reset or re-run ess-view-data-print) after switching.
+;;
+;; Table display keys (`ess-view-data-table-mode'):
+;;   S: sort by the column at point (server-side arrange over the whole data).
+;;   W: widen the current column; cells re-truncate from the full-value cache
+;;      at the new width, so repeated W reveals more of every long cell.
+;;   w: ess-view-data-widen-current-column-full - fit the current column to
+;;      its longest full value.
+;;   a: ess-view-data-widen-all-columns-full - fit every column to its longest
+;;      full value; the whole current page then sits in the buffer as full
+;;      text and built-in isearch (C-s / C-r) can search the full values.
+;;   v: ess-view-data-show-cell-value - show the full cell value at point in a
+;;      read-only buffer (from the local cache, no R round trip).
 
 ;; Utils:
 ;; NOTE: it will make a copy of the data and then does the following action
@@ -584,6 +596,11 @@ changing the temp object; see `ess-view-data--render'.")
   "Current server-side sort as (COL-NAME . DESC-P), or nil.")
 (defvar-local ess-view-data--page-cols nil
   "Column names of the current page (table display protocol cache).")
+(defvar-local ess-view-data--table-rows nil
+  "Full cell rows of the current page (table display protocol cache).
+Set together with `ess-view-data--page-cols' by `ess-view-data--table-print'.")
+(defvar-local ess-view-data--table-types nil
+  "Protocol column types of the current page (table display protocol cache).")
 
 (defun ess-view-data--display-table-p ()
   "Non-nil when the table display backend is active."
@@ -1567,10 +1584,9 @@ Empty cells are preserved so that columns stay aligned."
   "Header label for column COL of protocol TYPE."
   (format "%s [%s]" col type))
 
-(defun ess-view-data--table-widths (cols types rows)
-  "Per-column display widths for COLS/TYPES/ROWS.
-The width is the cell length capped at `ess-view-data-column-width-cap',
-but at least the header label width."
+(defun ess-view-data--table-lens (cols rows)
+  "Vector of the longest `string-width' per column over full ROWS.
+COLS only supplies the number of columns; cells beyond it are ignored."
   (let ((lens (make-vector (length cols) 0)))
     (dolist (r rows)
       (let ((i 0))
@@ -1578,11 +1594,34 @@ but at least the header label width."
           (when (< i (length lens))
             (aset lens i (max (aref lens i) (string-width cell)))
             (setq i (1+ i))))))
+    lens))
+
+(defun ess-view-data--table-widths (cols types rows)
+  "Per-column display widths for COLS/TYPES/ROWS.
+The width is the cell length capped at `ess-view-data-column-width-cap',
+but at least the header label width."
+  (let ((lens (ess-view-data--table-lens cols rows)))
     (cl-loop for col in cols
              for ty in types
              for i from 0
              collect (max (min ess-view-data-column-width-cap (aref lens i))
                           (string-width (ess-view-data--table-label col ty))))))
+
+(defun ess-view-data--table-full-widths ()
+  "Vector of per-column full display widths for the cached page.
+Each width fits the longest full value of that column (uncapped) and
+the header label, so a table widened to these widths contains the full
+text of every cell.  Return nil when there is no cached data."
+  (when (and ess-view-data--table-rows ess-view-data--page-cols)
+    (let ((lens (ess-view-data--table-lens ess-view-data--page-cols
+                                           ess-view-data--table-rows)))
+      (cl-loop for col in ess-view-data--page-cols
+               for ty in ess-view-data--table-types
+               for i from 0
+               collect (max (aref lens i)
+                            (string-width (ess-view-data--table-label col ty)))
+               into res
+               finally (return (vconcat res))))))
 
 (defun ess-view-data--table-cell (cell width)
   "CELL truncated to WIDTH, appending \"...\" when longer."
@@ -1636,16 +1675,51 @@ Each entry is (ID VECTOR), a two-element list, not a dotted pair:
     (setq-local ess-view-data-page-number
                 (min ess-view-data-page-number (max 0 (1- ess-view-data-total-page))))
     (setq-local ess-view-data--page-cols cols)
+    (setq-local ess-view-data--table-rows rows)
+    (setq-local ess-view-data--table-types types)
     (if cols
         (let ((widths (ess-view-data--table-widths cols types rows)))
           (setq tabulated-list-format (ess-view-data--table-format cols types widths))
-          (setq tabulated-list-entries (ess-view-data--table-entries rows widths)))
+          (ess-view-data--table-entries-current))
       (setq tabulated-list-format (vector (list "No data" 20 t)))
       (setq tabulated-list-entries (list (list 0 (vector (format "%d rows" n))))))
     (setq tabulated-list-sort-key (ess-view-data--table-sort-key tabulated-list-format))
     (tabulated-list-init-header)
     (tabulated-list-print t)
     (ess-view-data-mode 1)))
+
+(defun ess-view-data--table-entries-current ()
+  "Rebuild `tabulated-list-entries' from the full-row cache.
+The truncation width of each column comes from the current
+`tabulated-list-format', so widening or narrowing a column reveals or
+hides the corresponding part of every cell.  Does nothing outside an
+`ess-view-data-table-mode' buffer or when the cache is empty."
+  (when (and (derived-mode-p 'ess-view-data-table-mode)
+             ess-view-data--table-rows
+             tabulated-list-format)
+    (let ((widths (cl-loop for col across tabulated-list-format
+                           collect (nth 1 col))))
+      (setq tabulated-list-entries
+            (ess-view-data--table-entries ess-view-data--table-rows widths)))))
+
+(defun ess-view-data--table-column-resized (&rest _)
+  "Rebuild entries and reprint after a column resize in ESS-V tables.
+Works only in `ess-view-data-table-mode' buffers that still hold the
+full-row cache; other tabulated-list buffers are left untouched.
+`tabulated-list-widen-current-column' / `-narrow-current-column' print
+in update mode from the already-truncated entries, so the rebuilt
+entries are printed here from the cache at the new column widths."
+  (when (and (derived-mode-p 'ess-view-data-table-mode)
+             ess-view-data--table-rows)
+    (ess-view-data--table-entries-current)
+    (tabulated-list-print t)))
+
+(when (fboundp 'tabulated-list-widen-current-column)
+  (advice-add 'tabulated-list-widen-current-column :after
+              #'ess-view-data--table-column-resized))
+(when (fboundp 'tabulated-list-narrow-current-column)
+  (advice-add 'tabulated-list-narrow-current-column :after
+              #'ess-view-data--table-column-resized))
 
 (defun ess-view-data--table-error (text)
   "Show protocol failure TEXT in the current table buffer."
@@ -1733,6 +1807,10 @@ according to `ess-view-data-display-backend'."
 (defvar ess-view-data-table-mode-map
   (let ((map (make-composed-keymap nil tabulated-list-mode-map)))
     (define-key map "S" #'ess-view-data-table-sort)
+    (define-key map "W" #'tabulated-list-widen-current-column)
+    (define-key map "v" #'ess-view-data-show-cell-value)
+    (define-key map "w" #'ess-view-data-widen-current-column-full)
+    (define-key map "a" #'ess-view-data-widen-all-columns-full)
     map)
   "Keymap for `ess-view-data-table-mode'.")
 
@@ -1764,6 +1842,76 @@ that sorting always applies to the whole data, not just the page."
   (cl-loop for col across tabulated-list-format
            when (equal (car col) label)
            return (plist-get (nthcdr 3 col) :evd-name)))
+
+;;; ** Cell value and column widening
+
+(defun ess-view-data-show-cell-value ()
+  "Show the full value of the cell at point in a read-only buffer.
+The popup lists the object name, column, type, row and the complete
+cell value, all read from the local page cache with no R round trip.
+Kill the popup with `q'.  Only available in the table display."
+  (interactive)
+  (unless (derived-mode-p 'ess-view-data-table-mode)
+    (user-error "ess-view-data-show-cell-value: only available in the table display"))
+  (let* ((id (tabulated-list-get-id))
+         (label (get-text-property (point) 'tabulated-list-column-name))
+         (raw (ess-view-data-table--label-raw label))
+         (idx (and raw (cl-position raw ess-view-data--page-cols :test #'equal)))
+         (row (and id (nth id ess-view-data--table-rows)))
+         (value (and row idx (nth idx row)))
+         (type (and idx (nth idx ess-view-data--table-types)))
+         (obj (or ess-view-data-object "")))
+    (unless value
+      (user-error "ess-view-data-show-cell-value: no cell value at point"))
+    (let ((buf (get-buffer-create "*ess-view-data-cell*")))
+      (with-current-buffer buf
+        (special-mode)
+        (let ((inhibit-read-only t))
+          (erase-buffer)
+          (insert (format "object: %s\n" obj))
+          (insert (format "column: %s [%s]\n" raw type))
+          (insert (format "row: %d\n\n" id))
+          (insert (if (equal value "") "(empty)" value)))
+        (goto-char (point-min)))
+      (pop-to-buffer buf))))
+
+(defun ess-view-data-widen-current-column-full ()
+  "Widen the current column to fit its longest full value.
+The new width comes from the full-row cache and is not capped by
+`ess-view-data-column-width-cap'.  Only available in the table display."
+  (interactive)
+  (unless (derived-mode-p 'ess-view-data-table-mode)
+    (user-error "ess-view-data-widen-current-column-full: only available in the table display"))
+  (let* ((label (get-text-property (point) 'tabulated-list-column-name))
+         (n (and label (cl-position label (append tabulated-list-format nil)
+                                    :test (lambda (l c) (equal l (car c))))))
+         (full (ess-view-data--table-full-widths))
+         (w (and full n (aref full n))))
+    (unless w
+      (user-error "ess-view-data-widen-current-column-full: no column at point"))
+    (setf (nth 1 (aref tabulated-list-format n)) w)
+    (tabulated-list-init-header)
+    (ess-view-data--table-entries-current)
+    (tabulated-list-print t)))
+
+(defun ess-view-data-widen-all-columns-full ()
+  "Widen every column to fit its longest full value.
+After this the whole current page is in the buffer as full text, so
+Emacs' built-in isearch (`C-s' / `C-r') can search the full values.
+The widths come from the full-row cache and are not capped by
+`ess-view-data-column-width-cap'.  Only available in the table display."
+  (interactive)
+  (unless (derived-mode-p 'ess-view-data-table-mode)
+    (user-error "ess-view-data-widen-all-columns-full: only available in the table display"))
+  (let ((full (ess-view-data--table-full-widths)))
+    (unless full
+      (user-error "ess-view-data-widen-all-columns-full: no cached data"))
+    (cl-loop for col across tabulated-list-format
+             for w across full
+             do (setf (nth 1 col) w))
+    (tabulated-list-init-header)
+    (ess-view-data--table-entries-current)
+    (tabulated-list-print t)))
 
 (defun ess-view-data-table--apply-sort (raw desc-p)
   "Arrange the whole data by column RAW; DESC-P for descending.
@@ -1897,7 +2045,9 @@ Called after any verb that changes the temp object so stale
 candidates are never offered (C3)."
   (with-current-buffer buf
     (setq ess-view-data-completion-candidate nil)
-    (setq ess-view-data--page-cols nil)))
+    (setq ess-view-data--page-cols nil)
+    (setq ess-view-data--table-rows nil)
+    (setq ess-view-data--table-types nil)))
 
 (defun ess-view-data--completion-key (kind name)
   "Return the cache alist key for NAME, namespace-prefixed by KIND.

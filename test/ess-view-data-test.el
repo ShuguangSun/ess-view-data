@@ -577,5 +577,155 @@ parsing fails and the failure text is displayed."
               (should (vectorp (nth 1 e))))))
       (kill-process proc))))
 
+;;; ** Table widening and cell value
+
+(ert-deftest ess-view-data-test-table-lens ()
+  "`--table-lens' computes the longest `string-width' per column.
+CJK characters count double, matching `string-width'."
+  (should (equal [5 6]
+                 (ess-view-data--table-lens
+                  '("a" "b") '(("hello" "123") ("x" "456789")))))
+  (should (equal [2 2]
+                 (ess-view-data--table-lens
+                  '("a" "b") '(("a" "b") ("\u4f60" "\u597d")))))
+  (should (equal [0 0] (ess-view-data--table-lens '("a" "b") nil))))
+
+(ert-deftest ess-view-data-test-table-full-widths ()
+  "`--table-full-widths' fits the longest value and the header label.
+Returns nil when the page cache is empty."
+  (with-temp-buffer
+    (setq-local ess-view-data--page-cols '("a" "b"))
+    (setq-local ess-view-data--table-types '("chr" "chr"))
+    (setq-local ess-view-data--table-rows '(("hello" "123") ("x" "456789")))
+    ;; longest values are 5 and 6; the labels "a [chr]"/"b [chr]" are 7
+    (should (equal [7 7] (ess-view-data--table-full-widths))))
+  (with-temp-buffer
+    (should (null (ess-view-data--table-full-widths)))))
+
+(ert-deftest ess-view-data-test-table-entries-current ()
+  "`--table-entries-current' re-truncates from the cache at the format widths."
+  (with-temp-buffer
+    (ess-view-data-table-mode)
+    (setq-local ess-view-data--table-rows '(("hello world" "x") ("ab" "yz")))
+    (setq tabulated-list-format (vector (list "a [chr]" 5 t :evd-name "a")
+                                        (list "b [chr]" 1 t :evd-name "b")))
+    (ess-view-data--table-entries-current)
+    (should (equal "he..." (aref (nth 1 (nth 0 tabulated-list-entries)) 0)))
+    (should (equal "x" (aref (nth 1 (nth 0 tabulated-list-entries)) 1)))
+    ;; widening the format reveals more of the full value on rebuild
+    (setf (nth 1 (aref tabulated-list-format 0)) 11)
+    (setf (nth 1 (aref tabulated-list-format 1)) 2)
+    (ess-view-data--table-entries-current)
+    (should (equal "hello world" (aref (nth 1 (nth 0 tabulated-list-entries)) 0)))
+    (should (equal "yz" (aref (nth 1 (nth 1 tabulated-list-entries)) 1)))))
+
+(ert-deftest ess-view-data-test-table-entries-current-guard ()
+  "Outside `ess-view-data-table-mode' the cache rebuild is a no-op."
+  (with-temp-buffer
+    (setq-local ess-view-data--table-rows '(("a")))
+    (setq tabulated-list-format (vector (list "a" 10 t)))
+    (ess-view-data--table-entries-current)
+    (should (null tabulated-list-entries))))
+
+(ert-deftest ess-view-data-test-widen-current-column-full ()
+  "`ess-view-data-widen-current-column-full' fits the current column."
+  (with-temp-buffer
+    (ess-view-data-table-mode)
+    (setq-local ess-view-data--page-cols '("a" "b"))
+    (setq-local ess-view-data--table-types '("chr" "chr"))
+    (setq-local ess-view-data--table-rows '(("hello world" "1")))
+    (setq tabulated-list-format (vector (list "a [chr]" 5 t :evd-name "a")
+                                        (list "b [chr]" 5 t :evd-name "b")))
+    (ess-view-data--table-entries-current)
+    (tabulated-list-print t)
+    (goto-char (point-min))
+    (ess-view-data-widen-current-column-full)
+    (should (= 11 (nth 1 (aref tabulated-list-format 0))))
+    (should (= 5 (nth 1 (aref tabulated-list-format 1))))
+    (goto-char (point-min))
+    (should (search-forward "hello world" nil t))))
+
+(ert-deftest ess-view-data-test-widen-all-columns-full ()
+  "`ess-view-data-widen-all-columns-full' fits every column to its longest
+value, so the full page text enters the buffer and becomes searchable."
+  (with-temp-buffer
+    (ess-view-data-table-mode)
+    (setq-local ess-view-data--page-cols '("a" "b"))
+    (setq-local ess-view-data--table-types '("chr" "chr"))
+    (setq-local ess-view-data--table-rows '(("hello" "1") ("x" "456789")))
+    (setq tabulated-list-format (vector (list "a [chr]" 3 t :evd-name "a")
+                                        (list "b [chr]" 3 t :evd-name "b")))
+    (ess-view-data--table-entries-current)
+    (tabulated-list-print t)
+    ;; the long value is truncated away before the widen
+    (goto-char (point-min))
+    (should-not (search-forward "456789" nil t))
+    ;; after widening all columns the full value is in the buffer
+    (ess-view-data-widen-all-columns-full)
+    (should (equal [7 7]
+                   (vconcat (mapcar (lambda (c) (nth 1 c))
+                                    (append tabulated-list-format nil)))))
+    (goto-char (point-min))
+    (should (search-forward "456789" nil t))))
+
+(ert-deftest ess-view-data-test-show-cell-value ()
+  "`ess-view-data-show-cell-value' pops a read-only buffer with the full cell."
+  (with-temp-buffer
+    (ess-view-data-table-mode)
+    (setq-local ess-view-data-object "mtcars")
+    (setq-local ess-view-data--page-cols '("a" "b"))
+    (setq-local ess-view-data--table-types '("chr" "chr"))
+    (setq-local ess-view-data--table-rows '(("hello world" "x")))
+    (setq tabulated-list-format (vector (list "a [chr]" 5 t :evd-name "a")
+                                        (list "b [chr]" 5 t :evd-name "b")))
+    (ess-view-data--table-entries-current)
+    (tabulated-list-print t)
+    (goto-char (point-min))
+    (ess-view-data-show-cell-value)
+    (with-current-buffer "*ess-view-data-cell*"
+      (let ((s (buffer-string)))
+        (should (string-match-p "object: mtcars" s))
+        (should (string-match-p "column: a \\[chr\\]" s))
+        (should (string-match-p "row: 0" s))
+        (should (string-match-p "hello world" s))))
+    (kill-buffer "*ess-view-data-cell*")))
+
+(ert-deftest ess-view-data-test-column-resized-advice ()
+  "The widen/narrow advice is installed and only acts in ESS-V tables."
+  (should (advice-member-p #'ess-view-data--table-column-resized
+                           'tabulated-list-widen-current-column))
+  (should (advice-member-p #'ess-view-data--table-column-resized
+                           'tabulated-list-narrow-current-column))
+  ;; no-op outside the table mode
+  (with-temp-buffer
+    (setq-local ess-view-data--table-rows '(("a")))
+    (ess-view-data--table-column-resized)
+    (should (null tabulated-list-entries)))
+  ;; in the table mode it rebuilds entries at the new width and reprints
+  (with-temp-buffer
+    (ess-view-data-table-mode)
+    (setq-local ess-view-data--table-rows '(("hello")))
+    (setq tabulated-list-format (vector (list "a [chr]" 3 t :evd-name "a")))
+    (ess-view-data--table-entries-current)
+    (tabulated-list-print t)
+    (goto-char (point-min))
+    (should-not (search-forward "hello" nil t))
+    (goto-char (point-min))
+    (setf (nth 1 (aref tabulated-list-format 0)) 10)
+    (ess-view-data--table-column-resized)
+    (goto-char (point-min))
+    (should (search-forward "hello" nil t))))
+
+(ert-deftest ess-view-data-test-widen-commands-guard ()
+  "Widen/full-value commands signal `user-error' outside the table display."
+  (with-temp-buffer
+    (should-error (ess-view-data-show-cell-value) :type 'user-error)
+    (should-error (ess-view-data-widen-current-column-full) :type 'user-error)
+    (should-error (ess-view-data-widen-all-columns-full) :type 'user-error))
+  (with-temp-buffer
+    (ess-view-data-table-mode)
+    (setq-local ess-view-data--table-rows nil)
+    (should-error (ess-view-data-widen-all-columns-full) :type 'user-error)))
+
 (provide 'ess-view-data-test)
 ;;; ess-view-data-test.el ends here

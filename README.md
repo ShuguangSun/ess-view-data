@@ -70,7 +70,9 @@ It will put a head information at above:
 How to display data in the view buffer:
 
 - table (default): a structured `tabulated-list` view with column types,
-  aligned cells, truncated long cells and clickable sort headers
+  aligned cells, truncated long cells and clickable sort headers.  Long cells
+  are re-truncated from the full-value cache whenever a column is widened, and
+  the keys below reveal the full values.
 - print / kable: the historical text output of the print/kable backends,
   i.e. csv text with the `# Trace` / `# Last` / `# Page number` head lines
   and a csv-mode column header
@@ -84,6 +86,27 @@ To restore the historical csv + header view, set it to `print`, e.g.:
 
 **NB**: the setting is global; after switching, refresh the current view
 buffer with `ess-view-data-reset` or re-run `ess-view-data-print`.
+
+### table display keys
+
+Keys bound in the table display (`ess-view-data-table-mode`):
+
+- `S`: sort by the column at point (server-side `arrange` over the whole data)
+- `W`: widen the current column (built-in `tabulated-list-widen-current-column`).
+  Cells re-truncate from the full-value cache at the new width, so repeated `W`
+  gradually reveals more of every long cell (`M-10 W` widens by 10 columns;
+  `M-x tabulated-list-narrow-current-column` narrows and hides again).
+- `w`: `ess-view-data-widen-current-column-full` - widen the current column to
+  fit its longest full value (not capped by `ess-view-data-column-width-cap`).
+- `a`: `ess-view-data-widen-all-columns-full` - widen every column to fit its
+  longest full value, so the whole current page enters the buffer as full text
+  and Emacs' built-in isearch (`C-s` / `C-r`) can search the full values.
+- `v`: `ess-view-data-show-cell-value` - show the full value of the cell at
+  point in a read-only buffer (read from the local cache, no R round trip).
+
+After `a`, wide rows may overflow the window and scroll horizontally, which is
+expected.  The widened widths apply to the current page only and reset to the
+automatic widths on the next render (paging or sorting).
 
 ### ess-view-data-tibble-crayon-enabled-p
 
