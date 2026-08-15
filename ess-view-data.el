@@ -98,7 +98,7 @@
 (require 'tabulated-list)
 
 (defgroup ess-view-data ()
-  "ess-view-dat"
+  "View data: ess-view-data."
   :group 'ess
   :prefix "ess-view-data-")
 
@@ -309,7 +309,7 @@ print-backend' / `ess-view-data-current-summarise-print-backend'."
     (define-key keymap (kbd "C-c C-v") #'ess-view-data-summarise)
     (define-key keymap (kbd "C-c C-r") #'ess-view-data-reset)
     (define-key keymap (kbd "C-c C-w") #'ess-view-data-save)
-    (define-key keymap (kbd "C-c C-h") #'ess-view-data-show-history)
+    (define-key keymap (kbd "C-c C-t") #'ess-view-data-show-history)
     (define-key keymap (kbd "M-g p") #'ess-view-data-goto-previous-page)
     (define-key keymap (kbd "M-g n") #'ess-view-data-goto-next-page)
     (define-key keymap (kbd "M-g f") #'ess-view-data-goto-first-page)
@@ -353,7 +353,8 @@ Always returns at least 1 so that empty data still shows one (empty) page."
 
 (defun ess-view-data--page-slice (page-number rows-per-page nrow)
   "R slice string for PAGE-NUMBER (0-based) of an object with NROW rows.
-Return nil when the page is empty (NROW is 0 or PAGE-NUMBER is out of range)."
+Return nil when the page is empty (NROW is 0 or PAGE-NUMBER is out of range).
+Argument ROWS-PER-PAGE page number."
   (let ((start (1+ (* page-number rows-per-page)))
         (end (min (* (1+ page-number) rows-per-page) nrow)))
     (when (and (> nrow 0) (<= start end))
@@ -362,7 +363,8 @@ Return nil when the page is empty (NROW is 0 or PAGE-NUMBER is out of range)."
 (defun ess-view-data--page-slice-expr (page-number rows-per-page obj)
   "Guarded R slice expression for PAGE-NUMBER (0-based) of OBJ.
 Used by the text render path where NROW is not known in Emacs.
-Evaluates to `integer(0)' when OBJ is empty, otherwise to the page slice."
+Evaluates to `integer(0)' when OBJ is empty, otherwise to the page slice.
+Argument ROWS-PER-PAGE rows per page."
   (format "[if (nrow(%1$s) < 1) integer(0) else (%2$d*%3$d + 1):min((%2$d + 1)*%3$d, nrow(%1$s)),]"
           obj page-number rows-per-page))
 
@@ -380,7 +382,9 @@ escaped, so that Windows paths produce valid R code."
   "Send CMD to the ESS process and return non-nil when it was sent.
 PROC defaults to the process from `ess-local-process-name'.  When the
 process is busy, signal a `user-error' with a clear message instead of
-silently dropping CMD, so that callers can preserve their state."
+silently dropping CMD, so that callers can preserve their state.
+Optional argument BUF is the buffer to send from; NO-PROMPT-CHECK
+skips the busy check; WAIT is passed through to the process call."
   (let ((proc (or proc (get-process ess-local-process-name))))
     (cond
      ((null proc)
@@ -541,7 +545,7 @@ PREFIX is prepended and SUFFIX appended to each column."
   "Format FMT with ARGS, treating literal percent signs as literals.
 
 Only \"%s\" placeholders are substituted; other \"%\" characters
-(e.g. in \" %>% \") are escaped for `format'."
+\(e.g. in \" %>% \") are escaped for `format'."
   (apply #'format
          (replace-regexp-in-string "%\\([^s%]\\)" "%%\\1" fmt)
          args))
@@ -674,7 +678,8 @@ PNUMBER) or any other symbol, meaning keep the current page."
     (_ ess-view-data-page-number)))
 
 (defun ess-view-data--get-total-page (rpp proc-name proc)
-  "Update `ess-view-data-total-page' from R, counting RPP rows per page."
+  "Update `ess-view-data-total-page' from R, counting RPP rows per page.
+Argument PROC-NAME names the ESS process; PROC is the process object."
   (when (and proc-name proc
              (not (process-get proc 'busy)))
     (setq ess-view-data-total-page
@@ -685,7 +690,8 @@ PNUMBER) or any other symbol, meaning keep the current page."
            rpp))))
 
 (defun ess-view-data--rm-temp-object (proc-name proc)
-  "Remove the temp object from R unless PROC is busy."
+  "Remove the temp object from R unless PROC is busy.
+Argument PROC-NAME proc name."
   (when (and proc-name proc
              (not (process-get proc 'busy)))
     (ess-command (format "rm(%s, envir = globalenv())\n" ess-view-data-temp-object))
@@ -981,19 +987,25 @@ Optional argument PROC The associated ESS process."
   (ess-view-data--ensure-protocol proc))
 
 
-(defvar-local csv--header-line nil)
 (declare-function csv-header-line "csv-mode")
 
 (cl-defmethod ess-view-data--header-line ((_backend (eql dplyr)))
-  "Make header-line for dplyr."
+  "Make header-line for dplyr.
+
+R text output starts with trace notes and tibble meta lines (rows
+beginning with `+', `#' or an ANSI escape sequence).  Count those
+lines so the header is anchored to the first data row, then let
+csv-mode build the header-line from that row."
   (goto-char (point-min))
   (let ((lin 1))
+    ;; Skip meta/separator lines: `+--' table separators, `#' tibble
+    ;; annotations and ANSI colored header rows.
     (while (search-forward-regexp "^\\([+]\\|#\\|[[].+?#\\)" nil t)
       (forward-line)
       (setq lin (1+ lin)))
     (unless (fboundp 'csv-header-line) (require 'csv-mode nil t))
     (when (fboundp 'csv-header-line)
-      (setq csv--header-line nil)
+      (with-no-warnings (setq csv--header-line nil))
       (with-no-warnings (csv-header-line lin))))
   (goto-char (point-min)))
 
@@ -1346,7 +1358,7 @@ Optional argument PROC The associated ESS process."
       (setq lin (1+ lin)))
     (unless (fboundp 'csv-header-line) (require 'csv-mode nil t))
     (when (fboundp 'csv-header-line)
-      (setq csv--header-line nil)
+      (with-no-warnings (setq csv--header-line nil))
       (with-no-warnings (csv-header-line lin))))
   (goto-char (point-min)))
 
@@ -1474,7 +1486,7 @@ Empty cells are preserved so that columns stay aligned."
   (format "[%s]" type))
 
 (defun ess-view-data--numeric-p (type)
-  "Non-nil for right-aligned numeric protocol TYPES."
+  "Return non-nil when TYPE is a right-aligned numeric protocol type."
   (member type '("dbl" "int")))
 
 (defun ess-view-data--table-label (col type)
@@ -1796,7 +1808,7 @@ Vector values written by older code are converted for convenience."
       (if (vectorp value) (append value nil) value))))
 
 (defun ess-view-data--completion-put (key value)
-  "Store KEY->VALUE in the completion cache of the owning view buffer."
+  "Store KEY mapped to VALUE in the completion cache of the owner."
   (with-current-buffer (ess-view-data--completion-owner)
     (setf (alist-get key ess-view-data-completion-candidate) value)))
 
@@ -2382,7 +2394,7 @@ Optional argument PNUMBER The page number to go to."
 
 
 (define-minor-mode ess-view-data-mode
-  "ess-view-data"
+  "Toggle ess-view-data, a minor mode for browsing R data objects."
   :global nil
   :group 'ess-view-data
   :keymap ess-view-data-mode-map
