@@ -6,7 +6,7 @@
 ;; Created: 2019/04/06
 ;; Version: 1.3
 ;; URL: https://github.com/ShuguangSun/ess-view-data
-;; Package-Requires: ((emacs "26.1") (ess "18.10.1"))
+;; Package-Requires: ((emacs "26.1") (ess "18.10.1") (csv-mode "1.12") (transient "0.3.7"))
 ;; Keywords: tools
 
 ;; This program is free software; you can redistribute it and/or modify
@@ -122,6 +122,7 @@
 (require 'subr-x)
 (require 'json)
 (require 'tabulated-list)
+(require 'transient)
 
 (defgroup ess-view-data ()
   "View data: ess-view-data."
@@ -264,6 +265,11 @@ print-backend' / `ess-view-data-current-summarise-print-backend'."
                  (function :tag "Other"))
   :group 'ess-view-data)
 
+(defcustom ess-view-data-auto-show-transient nil
+  "Whether to automatically show the transient menu when opening an ess-view-data buffer."
+  :type 'boolean
+  :group 'ess-view-data)
+
 
 ;; TODO: configure input functions here
 (defvar ess-view-data-backend-setting
@@ -340,8 +346,40 @@ print-backend' / `ess-view-data-current-summarise-print-backend'."
     (define-key keymap (kbd "M-g n") #'ess-view-data-goto-next-page)
     (define-key keymap (kbd "M-g f") #'ess-view-data-goto-first-page)
     (define-key keymap (kbd "M-g l") #'ess-view-data-goto-last-page)
+    (define-key keymap (kbd "?") #'ess-view-data-transient)
     keymap)
   "Keymap for function `ess-view-data-mode'.")
+
+(transient-define-prefix ess-view-data-transient ()
+  "ESS View Data commands."
+  [["Navigation"
+   ("n" "Next page" ess-view-data-goto-next-page)
+   ("p" "Previous page" ess-view-data-goto-previous-page)
+   ("F" "First page" ess-view-data-goto-first-page)
+   ("l" "Last page" ess-view-data-goto-last-page)
+   ("g" "Goto page" ess-view-data-goto-page-number)]
+  ["View"
+   ("t" "Toggle maxprint" ess-view-data-toggle-maxprint)
+   ("P" "Print" ess-view-data-print-ex)]
+  ["Data Manipulation"
+   ("s" "Select columns" ess-view-data-select)
+   ("u" "Unselect columns" ess-view-data-unselect)
+   ("f" "Filter rows" ess-view-data-filter)
+   ("o" "Sort" ess-view-data-sort)
+   ("i" "Slice" ess-view-data-slice)
+   ("m" "Mutate" ess-view-data-mutate)
+   ("<tab>" "Long to wide (pivot_wider)" ess-view-data-long2wide-pivot-wider)
+   ("C-<tab>" "Wide to long (pivot_longer)" ess-view-data-wide2long-pivot-longer)]
+  ["Summarize"
+   ("c" "Count" ess-view-data-count)
+   ("U" "Unique" ess-view-data-unique)
+   ("v" "Summarise" ess-view-data-summarise)
+   ("S" "Skimr" ess-view-data-skimr)]
+  ["Other"
+   ("V" "Any data manipulation verb" ess-view-data-verbs)
+   ("r" "Reset" ess-view-data-reset)
+   ("w" "Save to csv file" ess-view-data-save)
+   ("q" "Quit" ess-view-data-quit)]])
 
 ;;; Indirect Buffers Minor Mode
 (defvar ess-view-data-edit-mode-map
@@ -2434,12 +2472,23 @@ Optional argument PROMPT prompt for `read-string'."
   (interactive)
   (ess-view-data-do-apply 'update 'wide2long t nil t))
 
+;; wide2long
+(defun ess-view-data-wide2long-pivot-longer ()
+  "Do wide2long using 'pivot_longer'."
+  (interactive)
+  (ess-view-data-do-apply 'update 'wide2long-pivot_longer t nil t))
 
 ;; long2wide
 (defun ess-view-data-long2wide ()
   "Do long2wide."
   (interactive)
   (ess-view-data-do-apply 'update 'long2wide t nil t))
+
+;; long2wide - Pivot_wider
+(defun ess-view-data-long2wide-pivot-wider ()
+  "Do long2wide using 'pivot_wider'."
+  (interactive)
+  (ess-view-data-do-apply 'update 'long2wide-pivot_wider t nil t))
 
 ;; update
 (defun ess-view-data-update ()
@@ -2643,7 +2692,9 @@ Optional argument PNUMBER The page number to go to."
                 (:eval (ess-view-data--mode-line-trace))
                 "]"))
         (force-mode-line-update)
-        (add-hook 'kill-buffer-hook #'ess-view-data-kill-buffer-hook nil t))))
+        (add-hook 'kill-buffer-hook #'ess-view-data-kill-buffer-hook nil t)
+        (when ess-view-data-auto-show-transient
+          (ess-view-data-transient)))))
 
 (defun ess-view-data-print-ex (&optional obj proc-name maxprint)
   "View OBJ in an `ess-view-data' buffer.
@@ -2713,8 +2764,8 @@ Optional argument MAXPRINT maxprint."
                  (tabulated-list-get-id)
                  (funcall ess-view-data-read-string
                   "Object: "
-                  (ess-get-words-from-vector "ls(envir = .GlobalEnv)\n")
-                  nil nil (current-word)))))
+                  (ess-get-words-from-vector "Filter(function(x) inherits(get(x, envir = .GlobalEnv), 'data.frame'), c(ls(envir = .GlobalEnv), '.Last.value'))\n")
+                  nil nil nil nil (current-word)))))
     (pop-to-buffer (ess-view-data-print-ex obj maxprint))))
 
 
