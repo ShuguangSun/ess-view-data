@@ -17,6 +17,25 @@ Clone this repository, or install from MELPA. Add the following to your `.emacs`
 
 Call `ess-view-data-print`, select a object whichever can be convert to a tibble or data.table depending on the backend, and then a buffer will pop up with data listed/printed. By default the data is rendered as a structured table via `tabulated-list`: column types are shown in the header, numeric columns are right aligned, long cells are truncated and NA values are displayed. Set `ess-view-data-display-backend` to `print` or `kable` to keep the historical text output. Further verbs can be done, like filter, select/unselect, mutate, group/ungroup, count, unique, summarise, and etc. It can be reset (`ess-view-data-reset`) any time.
 
+## Project structure
+
+Since version 1.5 the implementation is split across five files, following
+the "core file" pattern: shared ground is extracted into a core module so the
+sub-modules only depend downward and there is no circular dependency.
+
+```text
+ess-view-data.el           entry: interactive commands, mode map, transient menu
+ |-- ess-view-data-core.el       shared config, state, utils, generic API
+ |-- ess-view-data-backend.el    verb table, R protocol, dplyr/DT/data.table backends
+ |-- ess-view-data-table.el      table display, rendering, scrolling header, sorting
+ `-- ess-view-data-complete.el   completion cache and commands
+```
+
+`ess-view-data.el` is the only entry point: it `require`s the four sub-modules
+in order `core -> backend -> table -> complete`, matching the dependency
+direction, so the load order is acyclic. MELPA packages the five files together
+and generates the `-pkg.el` automatically; no recipe change is needed.
+
 To avoid mistaking break the original data, it will make a copy (e.g., `as_tibble(dt)` or `as.data.table(dt)`) as default.
 
 If data.table is preferred, just set `ess-view-data-current-backend` to `data.table+magrittr`. Call `ess-view-data-set-backend` to change the backends.
