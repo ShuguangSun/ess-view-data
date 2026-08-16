@@ -108,6 +108,12 @@ After `a`, wide rows may overflow the window and scroll horizontally, which is
 expected.  The widened widths apply to the current page only and reset to the
 automatic widths on the next render (paging or sorting).
 
+The table header follows horizontal scrolling: it is rebuilt before every
+redisplay from the window's current horizontal scroll, so the column names stay
+aligned with the data at any scroll position (scroll commands, mouse wheel,
+scroll bars and auto-hscroll).  In particular, after `a` you can scroll right
+to see the remaining column names instead of only the first few.
+
 ### ess-view-data-tibble-crayon-enabled-p
 
 set `ess-view-data-tibble-crayon-enabled-p` to `t` (default) will enable crayon
