@@ -1,10 +1,10 @@
 ;;; ess-view-data.el --- View Data                   -*- lexical-binding: t; -*-
 
-;; Copyright (C) 2019-2023  Shuguang Sun <shuguang79@qq.com>
+;; Copyright (C) 2019-2026  Shuguang Sun <shuguang79@qq.com>
 
 ;; Author: Shuguang Sun <shuguang79@qq.com>
 ;; Created: 2019/04/06
-;; Version: 1.3
+;; Version: 1.4
 ;; URL: https://github.com/ShuguangSun/ess-view-data
 ;; Package-Requires: ((emacs "26.1") (ess "18.10.1") (csv-mode "1.12") (transient "0.3.7"))
 ;; Keywords: tools
